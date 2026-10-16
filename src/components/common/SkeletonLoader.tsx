@@ -1,0 +1,29 @@
+import React from 'react'
+import { cn } from '../../utils/cn'
+
+export const Skeleton: React.FC<{ className?: string }> = ({ className }) => {
+  return (
+    <div
+      className={cn('animate-pulse rounded bg-[#E2E8F0]/70', className)}
+    />
+  )
+}
+
+export const TableSkeleton: React.FC<{ rows?: number; cols?: number }> = ({ rows = 5, cols = 6 }) => {
+  return (
+    <div className="w-full space-y-3 p-4">
+      <div className="flex gap-4 border-b border-[#E2E8F0] pb-3">
+        {Array.from({ length: cols }).map((_, i) => (
+          <Skeleton key={i} className="h-4 flex-1" />
+        ))}
+      </div>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex gap-4 py-2 border-b border-[#F1F5F9]">
+          {Array.from({ length: cols }).map((_, j) => (
+            <Skeleton key={j} className="h-4 flex-1" />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
