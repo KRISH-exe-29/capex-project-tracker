@@ -1,217 +1,205 @@
-import React, { useState, useMemo } from 'react'
-import { Receipt, Search, Filter, CheckCircle2, Clock, IndianRupee, AlertCircle } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { BadgeIndianRupee, CircleDollarSign, FileSearch, Hourglass, Receipt } from 'lucide-react'
 import { Card } from '../../common/Card'
 import { Button } from '../../common/Button'
+import { Input } from '../../common/Input'
+import { Modal } from '../../common/Modal'
 import { StatusBadge } from '../../common/Badge'
 import { EmptyState } from '../../common/EmptyState'
+import { IconButton } from '../../common/IconButton'
+import { PageHeader, StatCard } from '../../common/PageHeader'
+import { FilterSelect, SearchInput, Toolbar } from '../../common/Toolbar'
 import { useCapex } from '../../../context/CapexContext'
-import { formatINR, formatDate } from '../../../utils/formatters'
-import { SubWork } from '../../../types/capex'
+import type { SubWork } from '../../../types/capex'
+import { formatDate, formatINR } from '../../../utils/formatters'
 
-export const BillingView: React.FC = () => {
-  const { subWorks, filteredSubWorks, projects, updateSubWork, addToast } = useCapex()
+const STATUSES = ['ALL', 'PO Issued', 'In Execution', 'Billed', 'Paid']
 
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL')
+/** Record a payment only with its GRN and invoice, so the three-way match is on file. */
+const PaymentModal: React.FC<{ po: SubWork | null; onClose: () => void }> = ({ po, onClose }) => {
+  const { updateSubWork } = useCapex()
+  const [form, setForm] = useState({ grnNumber: '', grnDate: '', invoiceNumber: '', invoiceDate: '', paidDate: '', payeeBpCode: '' })
 
-  const displayedBills = useMemo(() => {
-    return filteredSubWorks.filter(sw => {
-      const matchesSearch =
-        sw.supplierName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sw.poNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sw.bpCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sw.workDescription.toLowerCase().includes(searchTerm.toLowerCase())
-
-      const matchesStatus = statusFilter === 'ALL' || sw.status === statusFilter
-      return matchesSearch && matchesStatus
+  useEffect(() => {
+    if (!po) return
+    const today = new Date().toISOString().slice(0, 10)
+    setForm({
+      grnNumber: po.grnNumber ?? '',
+      grnDate: po.grnDate ?? '',
+      invoiceNumber: po.invoiceNumber ?? '',
+      invoiceDate: po.invoiceDate ?? '',
+      paidDate: po.paidDate || today,
+      payeeBpCode: po.payeeBpCode || po.bpCode
     })
-  }, [filteredSubWorks, searchTerm, statusFilter])
+  }, [po])
 
-  // Aggregate totals
-  const totalInvoiced = displayedBills.reduce((acc, curr) => acc + curr.poValueGst, 0)
-  const paidBills = displayedBills.filter(b => b.status === 'Paid')
-  const totalPaid = paidBills.reduce((acc, curr) => acc + curr.poValueGst, 0)
-  const pendingAmount = totalInvoiced - totalPaid
+  const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) =>
+    setForm(prev => ({ ...prev, [key]: event.target.value }))
 
-  // Direct action: Mark as Paid
-  const handleMarkPaid = (sw: SubWork) => {
-    const today = new Date().toISOString().split('T')[0]
-    updateSubWork(sw.id, {
+  const payeeDiffers = Boolean(po && form.payeeBpCode.trim() && form.payeeBpCode.trim() !== po.bpCode)
+  const ready = form.grnNumber.trim() && form.invoiceNumber.trim() && form.paidDate
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!po || !ready) return
+    const saved = updateSubWork(po.id, {
       status: 'Paid',
-      paidDate: today
+      grnNumber: form.grnNumber.trim(),
+      grnDate: form.grnDate,
+      invoiceNumber: form.invoiceNumber.trim(),
+      invoiceDate: form.invoiceDate,
+      paidDate: form.paidDate,
+      payeeBpCode: form.payeeBpCode.trim() || po.bpCode
     })
-    addToast(`Payment of ${formatINR(sw.poValueGst)} to ${sw.supplierName} recorded.`, 'success')
+    if (saved) onClose()
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Receipt className="w-5 h-5 text-amber-600" />
-            <h2 className="text-xl font-bold text-[#0F172A] font-heading tracking-tight">
-              Finance — Billing & Payment Tracking
-            </h2>
-          </div>
-          <p className="text-xs text-[#64748B] mt-0.5">
-            Procurement billing tracking derived directly from approved sub-work purchase orders and BP vendor records.
-          </p>
+    <Modal
+      isOpen={po !== null}
+      onClose={onClose}
+      title={`Record payment for PO ${po?.poNumber ?? ''}`}
+      subtitle={po ? `${po.supplierName} · ${formatINR(po.poValueGst)}` : undefined}
+      maxWidth="md"
+    >
+      <form onSubmit={submit} className="space-y-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input label="GRN number" value={form.grnNumber} onChange={set('grnNumber')} className="font-mono" required />
+          <Input label="GRN date" type="date" value={form.grnDate} onChange={set('grnDate')} />
+          <Input label="Invoice number" value={form.invoiceNumber} onChange={set('invoiceNumber')} className="font-mono" required />
+          <Input label="Invoice date" type="date" value={form.invoiceDate} onChange={set('invoiceDate')} />
+          <Input label="Paid date" type="date" value={form.paidDate} onChange={set('paidDate')} required />
+          <Input
+            label="Payee BP code"
+            value={form.payeeBpCode}
+            onChange={set('payeeBpCode')}
+            className="font-mono"
+            helperText={`Vendor BP is ${po?.bpCode ?? '—'}`}
+          />
         </div>
-      </div>
+        {payeeDiffers && (
+          <p className="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 text-sm text-rose-800">
+            The payee is not the vendor on the PO. This will be flagged as an audit-risk exception.
+          </p>
+        )}
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-200/70 pt-4 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={!ready}>
+            Record payment
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <p className="text-xs font-semibold text-[#64748B] uppercase">Total PO Commitment</p>
-          <h3 className="text-xl font-bold font-heading text-[#0F172A] mt-1 font-mono">
-            {formatINR(totalInvoiced)}
-          </h3>
-          <p className="text-[11px] text-[#64748B] mt-1">{displayedBills.length} Purchase Orders</p>
-        </Card>
+export const BillingView: React.FC = () => {
+  const { filteredSubWorks, hasPermission, openRecord } = useCapex()
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('ALL')
+  const [paying, setPaying] = useState<SubWork | null>(null)
 
-        <Card>
-          <p className="text-xs font-semibold text-[#64748B] uppercase">Settled / Paid to Date</p>
-          <h3 className="text-xl font-bold font-heading text-emerald-600 mt-1 font-mono">
-            {formatINR(totalPaid)}
-          </h3>
-          <p className="text-[11px] text-[#64748B] mt-1">{paidBills.length} Invoices Closed</p>
-        </Card>
+  const live = filteredSubWorks.filter(po => po.status !== 'Cancelled')
+  const rows = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    return live.filter(po => {
+      if (status !== 'ALL' && po.status !== status) return false
+      return !needle || `${po.supplierName} ${po.poNumber} ${po.bpCode} ${po.workDescription}`.toLowerCase().includes(needle)
+    })
+  }, [live, search, status])
 
-        <Card>
-          <p className="text-xs font-semibold text-[#64748B] uppercase">Pending Clearance</p>
-          <h3 className="text-xl font-bold font-heading text-amber-600 mt-1 font-mono">
-            {formatINR(pendingAmount)}
-          </h3>
-          <p className="text-[11px] text-[#64748B] mt-1">{displayedBills.length - paidBills.length} Unsettled POs</p>
-        </Card>
-      </div>
+  const committedTotal = live.reduce((sum, po) => sum + po.poValueGst, 0)
+  const paid = live.filter(po => po.status === 'Paid')
+  const paidTotal = paid.reduce((sum, po) => sum + po.poValueGst, 0)
+  const canPay = hasPermission('finance', 'edit')
 
-      {/* Filter and Search Bar */}
-      <Card noPadding className="p-4">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 text-[#94A3B8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search by supplier, BP code, PO number..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-10 pl-9 pr-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Finance"
+        title="Billing"
+        description="Payments against purchase orders. A payment is recorded with its GRN and invoice so every rupee paid can be matched."
+        stats={
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <StatCard label="PO committed" value={formatINR(committedTotal, true)} hint={`${live.length} live POs`} icon={<BadgeIndianRupee className="h-4 w-4" />} />
+            <StatCard label="Paid" value={formatINR(paidTotal, true)} hint={`${paid.length} POs paid`} tone="success" icon={<CircleDollarSign className="h-4 w-4" />} />
+            <StatCard label="To be paid" value={formatINR(committedTotal - paidTotal, true)} tone="warning" icon={<Hourglass className="h-4 w-4" />} />
+          </div>
+        }
+      />
+
+      <Card noPadding>
+        <Toolbar>
+          <SearchInput value={search} onChange={setSearch} placeholder="Search supplier, PO number, BP code…" />
+          <FilterSelect
+            label="Status"
+            value={status}
+            onChange={setStatus}
+            options={STATUSES.map(item => ({ value: item, label: item === 'ALL' ? 'All' : item }))}
+          />
+        </Toolbar>
+
+        {rows.length === 0 ? (
+          <div className="p-5">
+            <EmptyState
+              icon={<Receipt className="h-6 w-6" />}
+              title={live.length ? 'No POs match' : 'Nothing to bill yet'}
+              description={live.length ? 'Change the search or status filter.' : 'Payments are recorded against purchase orders.'}
             />
           </div>
-
-          <div className="flex items-center gap-2.5 w-full md:w-auto">
-            <Filter className="w-3.5 h-3.5 text-[#64748B]" />
-            <span className="text-xs text-[#64748B] font-medium">Payment Status:</span>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-10 px-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 cursor-pointer"
-            >
-              <option value="ALL">All PO Billings ({filteredSubWorks.length})</option>
-              <option value="Paid">Paid (Settled)</option>
-              <option value="Billed">Billed (Awaiting Payment)</option>
-              <option value="In Execution">In Execution</option>
-              <option value="PO Issued">PO Issued</option>
-            </select>
-          </div>
-        </div>
-      </Card>
-
-      {/* Billing Table */}
-      <Card noPadding className="overflow-hidden">
-        {displayedBills.length === 0 ? (
-          <EmptyState
-            title="No Billing Records Found"
-            description="No purchase orders match your filter criteria."
-          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="table-wrap">
+            <table className="data-table">
               <thead>
-                <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-semibold text-[#475569] uppercase tracking-wider sticky top-0 z-10">
-                  <th className="py-3 px-4">Supplier Name</th>
-                  <th className="py-3 px-3">BP Code</th>
-                  <th className="py-3 px-3">PO Number</th>
-                  <th className="py-3 px-3">Work Package</th>
-                  <th className="py-3 px-3 text-right">PO Value + GST</th>
-                  <th className="py-3 px-3">Paid Date</th>
-                  <th className="py-3 px-3 text-center">Status</th>
-                  <th className="py-3 px-4 text-center">Payment Action</th>
+                <tr>
+                  <th>PO no.</th>
+                  <th>Supplier</th>
+                  <th className="num">Value incl. GST</th>
+                  <th>GRN</th>
+                  <th>Invoice</th>
+                  <th>Paid</th>
+                  <th>Status</th>
+                  <th className="actions">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#F1F5F9] text-xs text-[#0F172A]">
-                {displayedBills.map((bill) => {
-                  return (
-                    <tr key={bill.id} className="hover:bg-[#F8FAFC]/80 transition-colors">
-                      {/* Supplier */}
-                      <td className="py-3.5 px-4 font-semibold text-[#0F172A]">
-                        {bill.supplierName}
-                      </td>
-
-                      {/* BP Code */}
-                      <td className="py-3.5 px-3 font-mono text-xs text-[#64748B]">
-                        {bill.bpCode}
-                      </td>
-
-                      {/* PO Number */}
-                      <td className="py-3.5 px-3 font-mono text-xs font-semibold text-blue-700">
-                        {bill.poNumber}
-                      </td>
-
-                      {/* Work Description */}
-                      <td className="py-3.5 px-3 max-w-[220px] truncate text-[#475569]">
-                        {bill.workDescription}
-                      </td>
-
-                      {/* PO Value + GST */}
-                      <td className="py-3.5 px-3 text-right font-mono font-bold text-[#0F172A] whitespace-nowrap">
-                        {formatINR(bill.poValueGst)}
-                      </td>
-
-                      {/* Paid Date */}
-                      <td className="py-3.5 px-3 whitespace-nowrap text-[#64748B]">
-                        {bill.paidDate ? (
-                          <span className="text-emerald-700 font-medium">
-                            {formatDate(bill.paidDate)}
-                          </span>
-                        ) : (
-                          <span className="text-amber-600 font-medium italic">Pending</span>
-                        )}
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-3.5 px-3 text-center whitespace-nowrap">
-                        <StatusBadge status={bill.status} />
-                      </td>
-
-                      {/* Action */}
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        {bill.status !== 'Paid' ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
-                            onClick={() => handleMarkPaid(bill)}
-                            leftIcon={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
-                          >
-                            Mark Paid
+              <tbody>
+                {rows.map(po => (
+                  <tr key={po.id}>
+                    <td className="mono-num font-semibold text-blue-700">{po.poNumber}</td>
+                    <td className="max-w-[240px]">
+                      <p className="truncate font-medium text-slate-800">{po.supplierName}</p>
+                      <p className="mono-num text-xs text-slate-500">BP {po.bpCode}</p>
+                    </td>
+                    <td className="num font-semibold text-slate-900">{formatINR(po.poValueGst)}</td>
+                    <td className="mono-num text-xs">{po.grnNumber || <span className="text-slate-400">—</span>}</td>
+                    <td className="mono-num text-xs">{po.invoiceNumber || <span className="text-slate-400">—</span>}</td>
+                    <td className="whitespace-nowrap">{po.paidDate ? formatDate(po.paidDate) : <span className="text-slate-400">—</span>}</td>
+                    <td>
+                      <StatusBadge status={po.status} />
+                    </td>
+                    <td className="actions">
+                      <div className="flex items-center justify-end gap-1">
+                        <IconButton label="Open dossier" onClick={() => openRecord('procurement-dossier', po.id)}>
+                          <FileSearch className="h-4 w-4" />
+                        </IconButton>
+                        {canPay && po.status !== 'Paid' && (
+                          <Button size="sm" variant="outline" onClick={() => setPaying(po)}>
+                            Record payment
                           </Button>
-                        ) : (
-                          <span className="text-[11px] text-emerald-700 font-medium flex items-center justify-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Settled
-                          </span>
                         )}
-                      </td>
-                    </tr>
-                  )
-                })}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </Card>
+
+      <PaymentModal po={paying} onClose={() => setPaying(null)} />
     </div>
   )
 }

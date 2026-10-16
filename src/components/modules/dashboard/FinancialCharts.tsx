@@ -11,10 +11,10 @@ import {
   Pie,
   Cell
 } from 'recharts'
-import { Card, CardHeader, CardTitle, CardDescription } from '../../common/Card'
+import { Card, CardTitle, CardDescription } from '../../common/Card'
 import { useCapex } from '../../../context/CapexContext'
 import { formatINR } from '../../../utils/formatters'
-import { PieChart as PieIcon, BarChart3, ShieldCheck } from 'lucide-react'
+import { PieChart as PieIcon, BarChart3 } from 'lucide-react'
 
 export const FinancialCharts: React.FC = () => {
   const { projects, selectedProjectId } = useCapex()
@@ -64,12 +64,12 @@ export const FinancialCharts: React.FC = () => {
   }
 
   // Custom Tooltip for Budget Chart
-  const CustomBarTooltip = ({ active, payload, label }: any) => {
+  const renderBarTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const item = budgetChartData.find(d => d.name === label)
       return (
-        <div className="bg-white/95 backdrop-blur-md p-3.5 rounded-[8px] border border-[#CBD5E1] shadow-xl text-xs space-y-1.5 min-w-[200px]">
-          <p className="font-bold text-[#0F172A] border-b border-[#F1F5F9] pb-1">
+        <div className="bg-white/95 backdrop-blur-md p-3.5 rounded-lg border border-slate-200 shadow-xl text-xs space-y-1.5 min-w-[200px]">
+          <p className="font-bold text-[#0F172A] border-b border-slate-200/70 pb-1">
             {label} — {item?.fullName}
           </p>
           <div className="space-y-1 pt-0.5">
@@ -85,7 +85,7 @@ export const FinancialCharts: React.FC = () => {
               <span className="font-medium">3. PO Committed:</span>
               <span className="font-mono font-bold">{formatINR(item?.rawPO || 0)}</span>
             </div>
-            <div className="flex justify-between items-center text-emerald-700 border-t border-[#F1F5F9] pt-1">
+            <div className="flex justify-between items-center text-emerald-700 border-t border-slate-200/70 pt-1">
               <span className="font-medium">4. Available Balance:</span>
               <span className="font-mono font-bold">{formatINR(item?.rawBalance || 0)}</span>
             </div>
@@ -100,7 +100,7 @@ export const FinancialCharts: React.FC = () => {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* 1. Left Card: Budget vs PO Commitment vs Balance Summary (2 cols) */}
       <Card noPadding className="lg:col-span-2 flex flex-col justify-between">
-        <div className="p-5 border-b border-[#F1F5F9] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="p-5 border-b border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <div className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-blue-600" />
@@ -157,7 +157,7 @@ export const FinancialCharts: React.FC = () => {
                   axisLine={{ stroke: '#E2E8F0' }}
                   tickFormatter={(val) => `₹${val}Cr`}
                 />
-                <Tooltip content={<CustomBarTooltip />} />
+                <Tooltip content={renderBarTooltip} />
                 <Bar dataKey="approvedCr" name="Approved" fill="#2563EB" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="estimatedCr" name="Estimated" fill="#6366F1" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="poValueCr" name="PO Value" fill="#F59E0B" radius={[4, 4, 0, 0]} />
@@ -202,7 +202,7 @@ export const FinancialCharts: React.FC = () => {
 
       {/* 2. Right Card: Portfolio Status Distribution (1 col) */}
       <Card noPadding className="flex flex-col justify-between">
-        <div className="p-5 border-b border-[#F1F5F9]">
+        <div className="p-5 border-b border-slate-200/70">
           <div className="flex items-center gap-2">
             <PieIcon className="w-4 h-4 text-purple-600" />
             <CardTitle>Portfolio Status Distribution</CardTitle>
@@ -259,7 +259,7 @@ export const FinancialCharts: React.FC = () => {
         </div>
 
         {/* Itemized Status Breakdown List */}
-        <div className="p-4 pt-0 border-t border-[#F1F5F9] space-y-2.5">
+        <div className="p-4 pt-0 border-t border-slate-200/70 space-y-2.5">
           {['Active', 'Planning', 'Completed', 'Delayed'].map((statusKey) => {
             const count = statusCounts[statusKey] || 0
             const percentage = relevantProjects.length > 0

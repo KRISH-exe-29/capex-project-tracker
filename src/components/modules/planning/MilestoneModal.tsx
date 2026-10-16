@@ -134,12 +134,12 @@ export const MilestoneModal: React.FC<MilestoneModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={milestoneToEdit ? 'Edit Section' : 'Add Section (Level 3)'}
-      subtitle="Sections represent major delivery stages and schedule checkpoints."
+      title={milestoneToEdit ? 'Edit milestone' : 'Add milestone'}
+      subtitle="Milestones are schedule checkpoints inside a section, e.g. foundation complete or crane commissioned."
       maxWidth="lg"
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        {/* Parent Project & Section Selection */}
+        {/* Project & Section Selection */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Select
             label="Project"
@@ -174,8 +174,8 @@ export const MilestoneModal: React.FC<MilestoneModalProps> = ({
 
           <div className="sm:col-span-2">
             <Input
-              label="Section Name"
-              {...register('name', { required: 'Section name is required' })}
+              label="Milestone name"
+              {...register('name', { required: 'Enter a milestone name' })}
               error={errors.name?.message}
               placeholder="e.g. Sub-structure Excavation & Bored Piling"
               required
@@ -231,7 +231,7 @@ export const MilestoneModal: React.FC<MilestoneModalProps> = ({
           />
         </div>
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-[#F1F5F9]">
+        <div className="flex justify-end gap-3 pt-3 border-t border-slate-200/70">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

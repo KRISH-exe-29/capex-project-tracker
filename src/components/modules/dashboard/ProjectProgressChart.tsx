@@ -1,193 +1,144 @@
-import React from 'react'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer
-} from 'recharts'
-import { Card, CardHeader, CardTitle, CardDescription } from '../../common/Card'
+import React, { useMemo } from 'react'
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { TrendingUp, Layers } from 'lucide-react'
+import { Card, CardDescription, CardTitle } from '../../common/Card'
 import { useCapex } from '../../../context/CapexContext'
-import { TrendingUp, Layers, CheckCircle2, ShieldCheck, ArrowUpRight } from 'lucide-react'
+import { formatINR } from '../../../utils/formatters'
 
+const monthKey = (iso: string) => iso.slice(0, 7)
+const monthLabel = (key: string) =>
+  new Date(`${key}-01T00:00:00`).toLocaleString('en-IN', { month: 'short', year: '2-digit' })
+
+/**
+ * Cumulative PO commitments (by PO target date) against cumulative payments (by paid date).
+ * Built only from recorded POs; nothing is estimated.
+ */
 export const ProjectProgressChart: React.FC = () => {
-  const { filteredMilestones, filteredTasks } = useCapex()
+  const { filteredSubWorks, filteredTasks } = useCapex()
 
-  // Trend / Incurrence forecast data
-  const trendData = [
-    { month: 'Jan 26', plannedCr: 2.5, actualCr: 2.1 },
-    { month: 'Feb 26', plannedCr: 5.2, actualCr: 4.8 },
-    { month: 'Mar 26', plannedCr: 8.9, actualCr: 8.5 },
-    { month: 'Apr 26', plannedCr: 13.4, actualCr: 12.0 },
-    { month: 'May 26', plannedCr: 18.0, actualCr: 16.5 },
-    { month: 'Jun 26', plannedCr: 23.5, actualCr: 21.2 },
-    { month: 'Jul 26', plannedCr: 29.0, actualCr: null },
-    { month: 'Aug 26', plannedCr: 34.5, actualCr: null },
-    { month: 'Sep 26', plannedCr: 41.0, actualCr: null },
-    { month: 'Oct 26', plannedCr: 48.0, actualCr: null }
-  ]
+  const trend = useMemo(() => {
+    const live = filteredSubWorks.filter(po => po.status !== 'Cancelled')
+    const committedByMonth = new Map<string, number>()
+    const paidByMonth = new Map<string, number>()
+    live.forEach(po => {
+      if (po.targetDate) {
+        const key = monthKey(po.targetDate)
+        committedByMonth.set(key, (committedByMonth.get(key) ?? 0) + po.poValueGst)
+      }
+      if (po.status === 'Paid' && po.paidDate) {
+        const key = monthKey(po.paidDate)
+        paidByMonth.set(key, (paidByMonth.get(key) ?? 0) + po.poValueGst)
+      }
+    })
+    const months = [...new Set([...committedByMonth.keys(), ...paidByMonth.keys()])].sort()
+    let committed = 0
+    let paid = 0
+    return months.map(key => {
+      committed += committedByMonth.get(key) ?? 0
+      paid += paidByMonth.get(key) ?? 0
+      return { month: monthLabel(key), committed, paid }
+    })
+  }, [filteredSubWorks])
 
-  // Milestone Progress breakdown
-  const milestoneCompletionRate = filteredMilestones.length > 0
-    ? Math.round(
-        filteredMilestones.reduce((acc, m) => acc + m.progress, 0) /
-          filteredMilestones.length
-      )
+  const taskProgress = filteredTasks.length
+    ? Math.round(filteredTasks.reduce((sum, task) => sum + (task.progress || 0), 0) / filteredTasks.length)
     : 0
-
-  // Task Progress breakdown
-  const taskCompletionRate = filteredTasks.length > 0
-    ? Math.round(
-        filteredTasks.reduce((acc, t) => acc + t.progress, 0) /
-          filteredTasks.length
-      )
-    : 0
+  const completedTasks = filteredTasks.filter(task => task.status === 'Completed').length
+  const blockedTasks = filteredTasks.filter(task => task.status === 'Blocked').length
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* CAPEX Cash Outflow & Incurrence Trend (2 cols) */}
-      <Card noPadding className="lg:col-span-2 flex flex-col justify-between">
-        <div className="p-5 border-b border-[#F1F5F9] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <Card noPadding className="flex flex-col lg:col-span-2">
+        <div className="flex flex-col gap-2 border-b border-slate-200/70 p-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-blue-600" />
-              <CardTitle>Cumulative CAPEX Cash Outflow Trend & S-Curve</CardTitle>
+              <TrendingUp className="h-4 w-4 text-blue-600" />
+              <CardTitle>Commitments and payments over time</CardTitle>
             </div>
-            <CardDescription>
-              Planned expenditure baseline vs actual cash drawdowns in ₹ Crores
-            </CardDescription>
+            <CardDescription>Cumulative PO value by target date, and cumulative payments by paid date.</CardDescription>
           </div>
-
-          <div className="flex items-center gap-3 text-xs">
-            <span className="flex items-center gap-1.5 font-medium text-[#64748B]">
-              <span className="w-3 h-0.5 bg-[#94A3B8] inline-block border-b border-dashed" /> Planned
+          <div className="flex items-center gap-4 text-xs text-slate-500">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm bg-blue-600" /> PO committed
             </span>
-            <span className="flex items-center gap-1.5 font-medium text-blue-700">
-              <span className="w-3 h-1 bg-[#2563EB] rounded-full inline-block" /> Actual Drawn
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> Paid
             </span>
           </div>
         </div>
 
-        <div className="h-64 w-full p-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={trendData}
-              margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
-            >
-              <defs>
-                <linearGradient id="colorPlanned" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#94A3B8" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#94A3B8" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#2563EB" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#2563EB" stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-              <XAxis dataKey="month" stroke="#64748B" fontSize={11} tickLine={false} />
-              <YAxis
-                stroke="#64748B"
-                fontSize={11}
-                tickLine={false}
-                axisLine={{ stroke: '#E2E8F0' }}
-                tickFormatter={(val) => `₹${val}Cr`}
-              />
-              <Tooltip
-                formatter={(val: any, name: any) => [`₹ ${val} Cr`, name === 'plannedCr' ? 'Planned Baseline' : 'Actual Incurred']}
-                contentStyle={{ borderRadius: '6px', fontSize: '12px', borderColor: '#E2E8F0', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}
-              />
-              <Area
-                type="monotone"
-                dataKey="plannedCr"
-                stroke="#94A3B8"
-                strokeDasharray="4 4"
-                fillOpacity={1}
-                fill="url(#colorPlanned)"
-                strokeWidth={2}
-                name="plannedCr"
-              />
-              <Area
-                type="monotone"
-                dataKey="actualCr"
-                stroke="#2563EB"
-                fillOpacity={1}
-                fill="url(#colorActual)"
-                strokeWidth={2.5}
-                name="actualCr"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Bottom S-Curve variance note */}
-        <div className="px-5 py-3 border-t border-[#E2E8F0] bg-[#F8FAFC]/70 flex items-center justify-between text-xs text-[#64748B]">
-          <span>Cash outflow variance is within authorized $\pm 5\%$ tolerance band.</span>
-          <span className="font-semibold text-emerald-700">Audit Status: Cleared</span>
-        </div>
+        {trend.length === 0 ? (
+          <div className="flex h-64 items-center justify-center p-6 text-center text-sm text-slate-500">
+            The trend appears once POs with target or paid dates are recorded.
+          </div>
+        ) : (
+          <div className="h-64 w-full p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={trend} margin={{ top: 10, right: 16, left: 8, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="fillCommitted" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#2563EB" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#2563EB" stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id="fillPaid" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#10B981" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                <XAxis dataKey="month" stroke="#64748B" fontSize={11} tickLine={false} />
+                <YAxis
+                  stroke="#64748B"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  width={72}
+                  tickFormatter={value => formatINR(Number(value), true)}
+                />
+                <Tooltip
+                  formatter={(value, name) => [formatINR(Number(value)), name === 'committed' ? 'PO committed' : 'Paid']}
+                  contentStyle={{ borderRadius: 8, fontSize: 12, borderColor: '#E2E8F0' }}
+                />
+                <Area type="monotone" dataKey="committed" stroke="#2563EB" strokeWidth={2} fill="url(#fillCommitted)" />
+                <Area type="monotone" dataKey="paid" stroke="#10B981" strokeWidth={2} fill="url(#fillPaid)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </Card>
 
-      {/* Progress Execution Gauges (1 col) */}
-      <Card noPadding className="flex flex-col justify-between">
-        <div className="p-5 border-b border-[#F1F5F9]">
+      <Card noPadding className="flex flex-col">
+        <div className="border-b border-slate-200/70 p-5">
           <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-emerald-600" />
-            <CardTitle>Execution Progress Metrics</CardTitle>
+            <Layers className="h-4 w-4 text-emerald-600" />
+            <CardTitle>Work package progress</CardTitle>
           </div>
-          <CardDescription>
-            Aggregated delivery completion index
-          </CardDescription>
+          <CardDescription>Average progress reported on work packages.</CardDescription>
         </div>
-
-        <div className="p-5 space-y-5">
-          {/* Milestone Progress Bar */}
+        <div className="space-y-5 p-5">
           <div className="space-y-2">
-            <div className="flex justify-between items-center text-xs">
-              <span className="font-semibold text-[#0F172A]">Milestone Completion</span>
-              <span className="font-mono font-bold text-blue-600">{milestoneCompletionRate}%</span>
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium text-slate-800">Average progress</span>
+              <span className="mono-num font-semibold text-blue-700">{taskProgress}%</span>
             </div>
-            <div className="w-full bg-[#E2E8F0] h-2.5 rounded-full overflow-hidden">
-              <div
-                className="bg-blue-600 h-full rounded-full transition-all duration-500"
-                style={{ width: `${milestoneCompletionRate}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-[#64748B]">
-              {filteredMilestones.filter(m => m.status === 'Completed').length} of {filteredMilestones.length} milestones marked completed
-            </p>
-          </div>
-
-          {/* Task Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center text-xs">
-              <span className="font-semibold text-[#0F172A]">Task Execution Index</span>
-              <span className="font-mono font-bold text-emerald-600">{taskCompletionRate}%</span>
-            </div>
-            <div className="w-full bg-[#E2E8F0] h-2.5 rounded-full overflow-hidden">
-              <div
-                className="bg-[#10B981] h-full rounded-full transition-all duration-500"
-                style={{ width: `${taskCompletionRate}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-[#64748B]">
-              {filteredTasks.filter(t => t.status === 'Completed').length} of {filteredTasks.length} tasks closed
-            </p>
-          </div>
-        </div>
-
-        {/* Quality & Safety indicator badge */}
-        <div className="p-4 border-t border-[#F1F5F9] bg-emerald-50/60">
-          <div className="flex items-start gap-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-emerald-950">Zero Critical Non-Conformances</p>
-              <p className="text-[11px] text-emerald-800 mt-0.5">
-                All daily progress reports (DPRs) verified by lead consultants.
-              </p>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200/80">
+              <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${taskProgress}%` }} />
             </div>
           </div>
+          <dl className="grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-lg bg-slate-50/80 p-3">
+              <dt className="text-[11px] text-slate-500">Total</dt>
+              <dd className="mono-num text-lg font-semibold text-slate-900">{filteredTasks.length}</dd>
+            </div>
+            <div className="rounded-lg bg-emerald-50/80 p-3">
+              <dt className="text-[11px] text-emerald-700">Completed</dt>
+              <dd className="mono-num text-lg font-semibold text-emerald-800">{completedTasks}</dd>
+            </div>
+            <div className="rounded-lg bg-rose-50/80 p-3">
+              <dt className="text-[11px] text-rose-700">Blocked</dt>
+              <dd className="mono-num text-lg font-semibold text-rose-800">{blockedTasks}</dd>
+            </div>
+          </dl>
         </div>
       </Card>
     </div>

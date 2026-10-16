@@ -124,19 +124,19 @@ export const PartModal: React.FC<PartModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={partToEdit ? 'Edit Project Part' : 'Add Project Part (Level 3)'}
+      title={partToEdit ? 'Edit part' : 'Add part'}
       subtitle="Define sub-phase capital divisions (e.g. Part 1: 100 Cr, Part II: 35 Cr) feeding into engineering sections."
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <Select
-          label="Parent Project (Level 1)"
+          label="Project"
           {...register('projectId', { required: 'Parent project is required' })}
           options={projects.map(p => ({ value: p.id, label: `${p.code} - ${p.name}` }))}
           error={errors.projectId?.message}
         />
 
         <Select
-          label="Parent Phase (Level 2)"
+          label="Phase"
           {...register('phaseId', { required: 'Parent phase is required' })}
           options={availablePhases.map(ph => ({
             value: ph.id,
@@ -195,7 +195,7 @@ export const PartModal: React.FC<PartModalProps> = ({
             {...register('description')}
             rows={3}
             placeholder="Part scope, utility coverage, or functional boundaries..."
-            className="w-full text-xs p-3 bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+            className="w-full text-xs p-3 bg-white text-[#0F172A] border border-[#CBD5E1] rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
           />
         </div>
 

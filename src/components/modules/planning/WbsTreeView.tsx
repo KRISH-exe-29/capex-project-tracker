@@ -1,34 +1,67 @@
-import React, { useState } from 'react'
-import {
-  ChevronRight,
-  ChevronDown,
-  Plus,
-  Edit2,
-  Trash2,
-  Network,
-  FolderKanban,
-  Layers,
-  CheckSquare,
-  BriefcaseBusiness,
-  Building2,
-  Filter,
-  Search,
-  ExternalLink,
-  Calendar,
-  Layers2
-} from 'lucide-react'
+import React, { useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight, ClipboardList, FileSearch, Network, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Card } from '../../common/Card'
 import { Button } from '../../common/Button'
 import { StatusBadge } from '../../common/Badge'
+import { EmptyState } from '../../common/EmptyState'
+import { PageHeader } from '../../common/PageHeader'
+import { SearchInput, Toolbar } from '../../common/Toolbar'
+import { IconButton } from '../../common/IconButton'
 import { PhaseModal } from './PhaseModal'
 import { PartModal } from './PartModal'
 import { SectionModal } from './SectionModal'
-import { MilestoneModal } from './MilestoneModal'
 import { TaskModal } from './TaskModal'
+import { ProjectModal } from './ProjectModal'
 import { SubWorkModal } from './SubWorkModal'
+import { RaisePrModal } from '../procurement/RaisePrModal'
 import { useCapex } from '../../../context/CapexContext'
-import { formatINR, formatDate } from '../../../utils/formatters'
-import { ProjectPhase, ProjectPart, Section, Milestone, Task, SubWork } from '../../../types/capex'
+import { available } from '../../../utils/capexRules'
+import { formatINR } from '../../../utils/formatters'
+import { cn } from '../../../utils/cn'
+import type { ProjectPart, ProjectPhase, Section, SubWork, Task } from '../../../types/capex'
+
+type Kind = 'project' | 'phase' | 'part' | 'section' | 'task' | 'po'
+
+interface TreeNode {
+  id: string
+  kind: Kind
+  wbs: string
+  name: string
+  meta?: string
+  amount?: number
+  amountHint?: React.ReactNode
+  status?: string
+  children: TreeNode[]
+  actions: React.ReactNode
+}
+
+const KIND_CHIP: Record<Kind, string> = {
+  project: 'bg-blue-600 text-white',
+  phase: 'bg-violet-100 text-violet-800',
+  part: 'bg-sky-100 text-sky-800',
+  section: 'bg-slate-200 text-slate-800',
+  task: 'bg-emerald-100 text-emerald-800',
+  po: 'bg-amber-100 text-amber-900'
+}
+
+const KIND_LABEL: Record<Kind, string> = {
+  project: 'Project',
+  phase: 'Phase',
+  part: 'Part',
+  section: 'Section',
+  task: 'Work package',
+  po: 'PO'
+}
+
+type ModalState =
+  | { type: 'project' }
+  | { type: 'phase'; edit?: ProjectPhase; projectId: string }
+  | { type: 'part'; edit?: ProjectPart; projectId: string; phaseId?: string }
+  | { type: 'section'; edit?: Section; projectId: string; partId?: string }
+  | { type: 'task'; edit?: Task; projectId: string; sectionId?: string }
+  | { type: 'po'; edit?: SubWork; taskId?: string }
+  | { type: 'pr'; taskId: string }
+  | null
 
 export const WbsTreeView: React.FC = () => {
   const {
@@ -36,725 +69,355 @@ export const WbsTreeView: React.FC = () => {
     phases,
     parts,
     sections,
-    milestones,
     tasks,
     subWorks,
+    purchaseRequisitions,
     selectedProjectId,
+    hasPermission,
+    hasFinancialRecords,
     deletePhase,
     deletePart,
     deleteSection,
-    deleteMilestone,
     deleteTask,
-    deleteSubWork
+    openRecord
   } = useCapex()
 
-  // Track expanded state of nodes
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    'proj-500': true,
-    'phase-501': true,
-    'part-5011': true,
-    'sec-50111': true,
-    'tsk-501111': true,
-    'proj-001': true,
-    'phase-101': true,
-    'part-1011': true,
-    'sec-101': true,
-    'ms-1011': true,
-    'tsk-10111': true
-  })
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [search, setSearch] = useState('')
+  const [modal, setModal] = useState<ModalState>(null)
 
-  const [searchTerm, setSearchTerm] = useState('')
+  const canCreate = hasPermission('planning', 'create')
+  const canEdit = hasPermission('planning', 'edit')
+  const canDelete = hasPermission('planning', 'delete')
+  const lockedReason = 'Has PRs or POs under it, so it cannot be deleted'
 
-  // Modals state
-  const [isPhaseModalOpen, setIsPhaseModalOpen] = useState(false)
-  const [phaseToEdit, setPhaseToEdit] = useState<ProjectPhase | null>(null)
-  const [phaseDefaultProj, setPhaseDefaultProj] = useState<string>('')
+  const tree = useMemo(() => {
+    const editButton = (label: string, onClick: () => void) =>
+      canEdit && (
+        <IconButton label={`Edit ${label}`} onClick={onClick}>
+          <Pencil className="h-3.5 w-3.5" />
+        </IconButton>
+      )
+    const deleteButton = (label: string, locked: boolean, onClick: () => void) =>
+      canDelete && (
+        <IconButton label={`Delete ${label}`} tone="danger" disabledReason={locked ? lockedReason : undefined} onClick={onClick}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </IconButton>
+      )
+    const addButton = (label: string, onClick: () => void) =>
+      canCreate && (
+        <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" leftIcon={<Plus className="h-3 w-3" />} onClick={onClick}>
+          {label}
+        </Button>
+      )
 
-  const [isPartModalOpen, setIsPartModalOpen] = useState(false)
-  const [partToEdit, setPartToEdit] = useState<ProjectPart | null>(null)
-  const [partDefaultProj, setPartDefaultProj] = useState<string>('')
-  const [partDefaultPhase, setPartDefaultPhase] = useState<string>('')
+    const poNode = (po: SubWork): TreeNode => ({
+      id: po.id,
+      kind: 'po',
+      wbs: po.wbsNumber,
+      name: po.workDescription,
+      meta: `PO ${po.poNumber} · ${po.supplierName}`,
+      amount: po.poValueGst,
+      status: po.status,
+      children: [],
+      actions: (
+        <IconButton label="Open dossier" onClick={() => openRecord('procurement-dossier', po.id)}>
+          <FileSearch className="h-3.5 w-3.5" />
+        </IconButton>
+      )
+    })
 
-  const [isSecModalOpen, setIsSecModalOpen] = useState(false)
-  const [secToEdit, setSecToEdit] = useState<Section | null>(null)
-  const [secDefaultProj, setSecDefaultProj] = useState<string>('')
-  const [secDefaultPart, setSecDefaultPart] = useState<string>('')
+    const taskNode = (task: Task): TreeNode => {
+      const left = available(task, subWorks, purchaseRequisitions)
+      return {
+        id: task.id,
+        kind: 'task',
+        wbs: task.wbsNumber,
+        name: task.name,
+        amount: task.budgetAmount,
+        amountHint: (
+          <span className={left < 0 ? 'text-rose-600' : 'text-emerald-700'}>{formatINR(left, true)} left</span>
+        ),
+        status: task.status,
+        children: subWorks.filter(po => po.taskId === task.id).map(poNode),
+        actions: (
+          <>
+            {canCreate && (
+              <IconButton label="Raise PR" onClick={() => setModal({ type: 'pr', taskId: task.id })}>
+                <ClipboardList className="h-3.5 w-3.5" />
+              </IconButton>
+            )}
+            {editButton('work package', () => setModal({ type: 'task', edit: task, projectId: task.projectId }))}
+            {deleteButton('work package', hasFinancialRecords(item => item.id === task.id), () => deleteTask(task.id))}
+          </>
+        )
+      }
+    }
 
-  const [isMsModalOpen, setIsMsModalOpen] = useState(false)
-  const [msToEdit, setMsToEdit] = useState<Milestone | null>(null)
-  const [msDefaultProj, setMsDefaultProj] = useState<string>('')
-  const [msDefaultSec, setMsDefaultSec] = useState<string>('')
+    const sectionNode = (section: Section): TreeNode => {
+      const sectionTasks = tasks.filter(task => task.sectionId === section.id)
+      return {
+        id: section.id,
+        kind: 'section',
+        wbs: section.wbsNumber,
+        name: section.name,
+        meta: section.description,
+        amount: sectionTasks.reduce((sum, task) => sum + task.budgetAmount, 0),
+        amountHint: 'work package budgets',
+        children: sectionTasks.map(taskNode),
+        actions: (
+          <>
+            {addButton('Work package', () => setModal({ type: 'task', projectId: section.projectId, sectionId: section.id }))}
+            {editButton('section', () => setModal({ type: 'section', edit: section, projectId: section.projectId }))}
+            {deleteButton('section', hasFinancialRecords(task => task.sectionId === section.id), () => deleteSection(section.id))}
+          </>
+        )
+      }
+    }
 
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false)
-  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null)
-  const [taskDefaultProj, setTaskDefaultProj] = useState<string>('')
-  const [taskDefaultSec, setTaskDefaultSec] = useState<string>('')
-  const [taskDefaultMs, setTaskDefaultMs] = useState<string>('')
+    const partNode = (part: ProjectPart): TreeNode => ({
+      id: part.id,
+      kind: 'part',
+      wbs: part.wbsNumber,
+      name: part.name,
+      amount: part.budgetAmount,
+      status: part.status,
+      children: sections.filter(section => section.partId === part.id).map(sectionNode),
+      actions: (
+        <>
+          {addButton('Section', () => setModal({ type: 'section', projectId: part.projectId, partId: part.id }))}
+          {editButton('part', () => setModal({ type: 'part', edit: part, projectId: part.projectId }))}
+          {deleteButton('part', hasFinancialRecords(task => task.partId === part.id), () => deletePart(part.id))}
+        </>
+      )
+    })
 
-  const [isSubModalOpen, setIsSubModalOpen] = useState(false)
-  const [subToEdit, setSubToEdit] = useState<SubWork | null>(null)
-  const [subDefaultProj, setSubDefaultProj] = useState<string>('')
-  const [subDefaultSec, setSubDefaultSec] = useState<string>('')
-  const [subDefaultMs, setSubDefaultMs] = useState<string>('')
-  const [subDefaultTask, setSubDefaultTask] = useState<string>('')
+    const phaseNode = (phase: ProjectPhase): TreeNode => ({
+      id: phase.id,
+      kind: 'phase',
+      wbs: phase.wbsNumber,
+      name: phase.name,
+      amount: phase.budgetAmount,
+      status: phase.status,
+      children: parts.filter(part => part.phaseId === phase.id).map(partNode),
+      actions: (
+        <>
+          {addButton('Part', () => setModal({ type: 'part', projectId: phase.projectId, phaseId: phase.id }))}
+          {editButton('phase', () => setModal({ type: 'phase', edit: phase, projectId: phase.projectId }))}
+          {deleteButton('phase', hasFinancialRecords(task => task.phaseId === phase.id), () => deletePhase(phase.id))}
+        </>
+      )
+    })
 
-  const toggleExpand = (nodeId: string) => {
-    setExpandedNodes(prev => ({ ...prev, [nodeId]: !prev[nodeId] }))
+    return projects
+      .filter(project => selectedProjectId === 'all' || project.id === selectedProjectId)
+      .map(
+        (project): TreeNode => ({
+          id: project.id,
+          kind: 'project',
+          wbs: project.code,
+          name: project.name,
+          meta: `PO committed ${formatINR(project.poValue, true)} · ${project.executionTimeline}`,
+          amount: project.approvedAmount,
+          amountHint: 'approved',
+          status: project.status,
+          children: [
+            ...phases.filter(phase => phase.projectId === project.id).map(phaseNode),
+            ...sections.filter(section => section.projectId === project.id && !section.partId).map(sectionNode)
+          ],
+          actions: (
+            <>
+              {addButton('Phase', () => setModal({ type: 'phase', projectId: project.id }))}
+              {addButton('Section', () => setModal({ type: 'section', projectId: project.id }))}
+            </>
+          )
+        })
+      )
+  }, [
+    projects,
+    phases,
+    parts,
+    sections,
+    tasks,
+    subWorks,
+    purchaseRequisitions,
+    selectedProjectId,
+    canCreate,
+    canEdit,
+    canDelete,
+    hasFinancialRecords,
+    deletePhase,
+    deletePart,
+    deleteSection,
+    deleteTask,
+    openRecord
+  ])
+
+  // Search keeps a node when it or any descendant matches, and opens everything on the way.
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    if (!needle) return tree
+    const prune = (node: TreeNode): TreeNode | null => {
+      const children = node.children.map(prune).filter((child): child is TreeNode => child !== null)
+      const hit = `${node.wbs} ${node.name} ${node.meta ?? ''}`.toLowerCase().includes(needle)
+      return hit || children.length ? { ...node, children } : null
+    }
+    return tree.map(prune).filter((node): node is TreeNode => node !== null)
+  }, [tree, search])
+
+  const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
+    const open = search.trim() ? true : !collapsed[node.id]
+    const hasChildren = node.children.length > 0
+    const isProject = node.kind === 'project'
+
+    return (
+      <React.Fragment key={node.id}>
+        <div
+          className={cn(
+            'group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200/60 py-2.5 pr-4 transition-colors md:grid-cols-[minmax(0,1fr)_10rem_8rem_12rem]',
+            isProject ? 'bg-blue-50/60' : 'hover:bg-white/70'
+          )}
+          style={{ paddingLeft: `${16 + depth * 22}px` }}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCollapsed(prev => ({ ...prev, [node.id]: !prev[node.id] }))}
+              className={cn(
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-200/70',
+                !hasChildren && 'invisible'
+              )}
+              aria-label={open ? `Collapse ${node.name}` : `Expand ${node.name}`}
+              aria-expanded={open}
+            >
+              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            <span
+              className={cn('mono-num shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold', KIND_CHIP[node.kind])}
+              title={KIND_LABEL[node.kind]}
+            >
+              {node.wbs}
+            </span>
+            <div className="min-w-0">
+              <p className={cn('truncate text-slate-900', isProject ? 'text-sm font-semibold' : 'text-[13px] font-medium')}>
+                {node.name}
+              </p>
+              {node.meta && <p className="truncate text-xs text-slate-500">{node.meta}</p>}
+            </div>
+          </div>
+
+          <div className="hidden text-right md:block">
+            {node.amount !== undefined && (
+              <>
+                <p className="mono-num text-[13px] font-semibold text-slate-900">{formatINR(node.amount)}</p>
+                {node.amountHint && <p className="text-[11px] text-slate-500">{node.amountHint}</p>}
+              </>
+            )}
+          </div>
+
+          <div className="hidden md:block">{node.status && <StatusBadge status={node.status} />}</div>
+
+          <div className="flex items-center justify-end gap-1">{node.actions}</div>
+        </div>
+        {open && node.children.map(child => renderNode(child, depth + 1))}
+      </React.Fragment>
+    )
   }
 
-  const relevantProjects = selectedProjectId === 'all'
-    ? projects
-    : projects.filter(p => p.id === selectedProjectId)
+  const closeModal = () => setModal(null)
 
   return (
     <div className="space-y-6">
-      {/* Filter and Search Bar */}
-      <Card noPadding className="p-4">
-        <div className="relative w-full max-w-sm">
-          <Search className="w-4 h-4 text-[#94A3B8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="Filter WBS items or numbers (e.g. 1.1, Civil)..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-10 pl-9 pr-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
-          />
-        </div>
+      <PageHeader
+        eyebrow="Planning"
+        title="Project WBS"
+        description="The full breakdown: project → phase → part → section → work package (budget line) → purchase order."
+        actions={
+          canCreate && (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setModal({ type: 'project' })}>
+              New project
+            </Button>
+          )
+        }
+      />
+
+      <Card noPadding className="overflow-hidden">
+        <Toolbar>
+          <SearchInput value={search} onChange={setSearch} placeholder="Find by WBS number or name (e.g. 1.2, Civil)" />
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+            {(Object.keys(KIND_LABEL) as Kind[]).map(kind => (
+              <span key={kind} className="inline-flex items-center gap-1.5">
+                <span className={cn('h-2.5 w-2.5 rounded-sm', KIND_CHIP[kind])} />
+                {KIND_LABEL[kind]}
+              </span>
+            ))}
+          </div>
+        </Toolbar>
+
+        {visible.length === 0 ? (
+          <div className="p-5">
+            <EmptyState
+              icon={<Network className="h-6 w-6" />}
+              title={tree.length ? 'Nothing matches' : 'No projects yet'}
+              description={
+                tree.length
+                  ? 'Try another WBS number or name.'
+                  : 'Create a project, then break it into phases, sections and work packages with budgets.'
+              }
+              actionLabel={!tree.length && canCreate ? 'New project' : undefined}
+              onAction={() => setModal({ type: 'project' })}
+            />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <div className="min-w-[640px]">
+              <div className="hidden grid-cols-[minmax(0,1fr)_10rem_8rem_12rem] gap-3 border-b border-slate-200 bg-slate-50/80 py-2 pr-4 pl-4 text-[11px] font-semibold uppercase tracking-[0.05em] text-slate-500 md:grid">
+                <span>WBS item</span>
+                <span className="text-right">Budget / value</span>
+                <span>Status</span>
+                <span className="text-right">Actions</span>
+              </div>
+              {visible.map(node => renderNode(node, 0))}
+            </div>
+          </div>
+        )}
       </Card>
 
-      {/* WBS Tree Container */}
-      <div className="space-y-4">
-        {relevantProjects.map((proj, projIndex) => {
-          const isProjExpanded = expandedNodes[proj.id] ?? true
-          const projPhases = phases.filter(ph => ph.projectId === proj.id)
-          const projDirectSections = sections.filter(s => s.projectId === proj.id && !s.partId)
-          const projNum = (projIndex + 1).toString()
-
-          return (
-            <Card key={proj.id} noPadding className="overflow-hidden border-[#CBD5E1]">
-              {/* Level 1: Project Header Row */}
-              <div className="p-3.5 bg-blue-50/70 border-b border-blue-200 flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => toggleExpand(proj.id)}
-                    className="p-1 rounded-sm hover:bg-blue-100 text-blue-800 cursor-pointer"
-                  >
-                    {isProjExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  </button>
-
-                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-sm bg-blue-600 text-white shadow-xs">
-                    {projNum}
-                  </span>
-
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold text-[#0F172A] font-heading">
-                        {proj.name}
-                      </h3>
-                      <StatusBadge status={proj.status} />
-                    </div>
-                    <p className="text-[11px] text-[#64748B]">
-                      Overall Approved: <strong className="font-mono text-blue-700">{formatINR(proj.approvedAmount)}</strong> | PO Committed:{' '}
-                      <strong className="font-mono text-[#0F172A]">{formatINR(proj.poValue)}</strong> | Timeline:{' '}
-                      {proj.executionTimeline}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="h-8 text-xs"
-                    leftIcon={<Plus className="w-3.5 h-3.5" />}
-                    onClick={() => {
-                      setPhaseToEdit(null)
-                      setPhaseDefaultProj(proj.id)
-                      setIsPhaseModalOpen(true)
-                    }}
-                  >
-                    Add Phase
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs bg-white"
-                    leftIcon={<Plus className="w-3.5 h-3.5 text-blue-600" />}
-                    onClick={() => {
-                      setSecToEdit(null)
-                      setSecDefaultProj(proj.id)
-                      setSecDefaultPart('')
-                      setIsSecModalOpen(true)
-                    }}
-                  >
-                    Add Section
-                  </Button>
-                </div>
-              </div>
-
-              {/* Tree Content */}
-              {isProjExpanded && (
-                <div className="divide-y divide-[#F1F5F9]">
-                  {projPhases.length === 0 && projDirectSections.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-[#94A3B8] italic">
-                      No WBS phases or sections created for this project yet. Click &quot;Add Phase&quot; to define Level 2.
-                    </div>
-                  ) : null}
-
-                  {/* Level 2: Project Phases */}
-                  {projPhases.map((phase) => {
-                    const isPhaseExpanded = expandedNodes[phase.id] ?? true
-                    const phaseParts = parts.filter(pt => pt.phaseId === phase.id)
-
-                    return (
-                      <div key={phase.id} className="bg-slate-50/50">
-                        {/* Phase Row (Level 2) */}
-                        <div className="py-2.5 px-4 pl-6 flex items-center justify-between hover:bg-purple-50/40 transition-colors gap-2 border-b border-[#F1F5F9]">
-                          <div className="flex items-center gap-2.5 overflow-hidden">
-                            <button
-                              onClick={() => toggleExpand(phase.id)}
-                              className="p-1 rounded-sm hover:bg-purple-100 text-purple-700 cursor-pointer"
-                            >
-                              {isPhaseExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                            </button>
-
-                            <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded-sm bg-purple-100 text-purple-800 border border-purple-200">
-                              {phase.wbsNumber}
-                            </span>
-
-                            <div className="truncate flex items-center gap-2">
-                              <span className="text-xs font-bold text-[#0F172A]">
-                                {phase.name}
-                              </span>
-                              <span className="font-mono text-xs font-semibold text-purple-800 bg-purple-50 px-2 py-0.5 rounded-sm border border-purple-200">
-                                {formatINR(phase.budgetAmount)}
-                              </span>
-                              <span className="text-[11px] text-[#64748B] hidden sm:inline">
-                                (CAPEX Approved: {formatDate(phase.capexApprovalDate)})
-                              </span>
-                            </div>
-
-                            <StatusBadge status={phase.status} />
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-[11px] px-2 text-purple-700 hover:bg-purple-50"
-                              leftIcon={<Plus className="w-3 h-3 text-purple-600" />}
-                              onClick={() => {
-                                setPartToEdit(null)
-                                setPartDefaultProj(proj.id)
-                                setPartDefaultPhase(phase.id)
-                                setIsPartModalOpen(true)
-                              }}
-                            >
-                              Add Part
-                            </Button>
-                            <button
-                              onClick={() => {
-                                setPhaseToEdit(phase)
-                                setIsPhaseModalOpen(true)
-                              }}
-                              className="p-1 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
-                              title="Edit Phase"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => deletePhase(phase.id)}
-                              className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
-                              title="Delete Phase"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Level 3: Parts under Phase */}
-                        {isPhaseExpanded && (
-                          <div className="divide-y divide-[#F1F5F9] bg-white">
-                            {phaseParts.map((part) => {
-                              const isPartExpanded = expandedNodes[part.id] ?? true
-                              const partSections = sections.filter(s => s.partId === part.id)
-
-                              return (
-                                <div key={part.id}>
-                                  {/* Part Row (Level 3) */}
-                                  <div className="py-2.5 px-4 pl-12 flex items-center justify-between hover:bg-sky-50/30 transition-colors gap-2 border-b border-[#F1F5F9]">
-                                    <div className="flex items-center gap-2.5 overflow-hidden">
-                                      <button
-                                        onClick={() => toggleExpand(part.id)}
-                                        className="p-1 rounded-sm hover:bg-sky-100 text-sky-700 cursor-pointer"
-                                      >
-                                        {isPartExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                                      </button>
-
-                                      <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded-sm bg-sky-100 text-sky-800 border border-sky-200">
-                                        {part.wbsNumber}
-                                      </span>
-
-                                      <div className="truncate flex items-center gap-2">
-                                        <span className="text-xs font-bold text-[#0F172A]">
-                                          {part.name}
-                                        </span>
-                                        <span className="font-mono text-xs font-semibold text-sky-800 bg-sky-50 px-2 py-0.5 rounded-sm border border-sky-200">
-                                          {formatINR(part.budgetAmount)}
-                                        </span>
-                                      </div>
-
-                                      <StatusBadge status={part.status} />
-                                    </div>
-
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-7 text-[11px] px-2 text-indigo-700 hover:bg-indigo-50"
-                                        leftIcon={<Plus className="w-3 h-3 text-indigo-600" />}
-                                        onClick={() => {
-                                          setSecToEdit(null)
-                                          setSecDefaultProj(proj.id)
-                                          setSecDefaultPart(part.id)
-                                          setIsSecModalOpen(true)
-                                        }}
-                                      >
-                                        Add Section
-                                      </Button>
-                                      <button
-                                        onClick={() => {
-                                          setPartToEdit(part)
-                                          setIsPartModalOpen(true)
-                                        }}
-                                        className="p-1 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
-                                        title="Edit Part"
-                                      >
-                                        <Edit2 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        onClick={() => deletePart(part.id)}
-                                        className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
-                                        title="Delete Part"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {/* Level 4: Sections under Part */}
-                                  {isPartExpanded && (
-                                    <div className="divide-y divide-[#F1F5F9] bg-[#F8FAFC]/50">
-                                      {partSections.map((sec) => {
-                                        const isSecExpanded = expandedNodes[sec.id] ?? true
-                                        const secTasks = tasks.filter(t => t.sectionId === sec.id)
-
-                                        return (
-                                          <div key={sec.id}>
-                                            {/* Section Row */}
-                                            <div className="py-2.5 px-4 pl-18 flex items-center justify-between hover:bg-slate-100/60 transition-colors gap-2">
-                                              <div className="flex items-center gap-2.5 overflow-hidden">
-                                                <button
-                                                  onClick={() => toggleExpand(sec.id)}
-                                                  className="p-1 rounded-sm hover:bg-slate-200 text-slate-700 cursor-pointer"
-                                                >
-                                                  {isSecExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                                                </button>
-
-                                                <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded-sm bg-slate-200 text-slate-800">
-                                                  {sec.wbsNumber}
-                                                </span>
-
-                                                <div className="truncate">
-                                                  <span className="text-xs font-bold text-[#0F172A]">
-                                                    {sec.name}
-                                                  </span>
-                                                  {sec.description && (
-                                                    <span className="text-[11px] text-[#64748B] ml-2 hidden sm:inline truncate">
-                                                      — {sec.description}
-                                                    </span>
-                                                  )}
-                                                </div>
-                                              </div>
-
-                                              <div className="flex items-center gap-2 shrink-0">
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  className="h-7 text-[11px] px-2"
-                                                  leftIcon={<Plus className="w-3 h-3 text-emerald-600" />}
-                                                  onClick={() => {
-                                                    setTaskToEdit(null)
-                                                    setTaskDefaultProj(proj.id)
-                                                    setTaskDefaultSec(sec.id)
-                                                    setTaskDefaultMs('')
-                                                    setIsTaskModalOpen(true)
-                                                  }}
-                                                >
-                                                  Add Work Package
-                                                </Button>
-                                                <button
-                                                  onClick={() => {
-                                                    setSecToEdit(sec)
-                                                    setIsSecModalOpen(true)
-                                                  }}
-                                                  className="p-1 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
-                                                >
-                                                  <Edit2 className="w-3.5 h-3.5" />
-                                                </button>
-                                                <button
-                                                  onClick={() => deleteSection(sec.id)}
-                                                  className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
-                                                >
-                                                  <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                              </div>
-                                            </div>
-
-                                            {/* Level 5: Work Packages */}
-                                            {isSecExpanded && (
-                                              <div className="divide-y divide-[#F1F5F9] bg-white">
-                                                {secTasks.map((tsk) => {
-                                                  const isTaskExpanded = expandedNodes[tsk.id] ?? true
-                                                  const taskSubworks = subWorks.filter(sw => sw.taskId === tsk.id)
-
-                                                  return (
-                                                    <div key={tsk.id}>
-                                                      {/* Work Package Row */}
-                                                      <div className="py-2 px-4 pl-24 flex items-center justify-between hover:bg-emerald-50/30 transition-colors gap-2">
-                                                        <div className="flex items-center gap-2 overflow-hidden">
-                                                          <button
-                                                            onClick={() => toggleExpand(tsk.id)}
-                                                            className="p-1 rounded-sm hover:bg-emerald-100 text-emerald-700 cursor-pointer"
-                                                          >
-                                                            {isTaskExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                                                          </button>
-
-                                                          <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded-sm bg-emerald-100 text-emerald-800">
-                                                            {tsk.wbsNumber}
-                                                          </span>
-
-                                                          <span className="text-xs font-semibold text-[#0F172A] truncate">
-                                                            {tsk.name}
-                                                          </span>
-
-                                                          <StatusBadge status={tsk.status} />
-                                                        </div>
-
-                                                        <div className="flex items-center gap-2 shrink-0">
-                                                          <span className="text-[11px] font-mono text-emerald-700 font-semibold hidden sm:inline">
-                                                            {tsk.progress}%
-                                                          </span>
-
-                                                          <Button
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="h-6 text-[10px] px-2 text-amber-800 hover:bg-amber-50"
-                                                            leftIcon={<Plus className="w-3 h-3 text-amber-600" />}
-                                                            onClick={() => {
-                                                              setSubToEdit(null)
-                                                              setSubDefaultProj(proj.id)
-                                                              setSubDefaultSec(sec.id)
-                                                              setSubDefaultMs('')
-                                                              setSubDefaultTask(tsk.id)
-                                                              setIsSubModalOpen(true)
-                                                            }}
-                                                          >
-                                                            Add Sub-work
-                                                          </Button>
-
-                                                          <button
-                                                            onClick={() => {
-                                                              setTaskToEdit(tsk)
-                                                              setIsTaskModalOpen(true)
-                                                            }}
-                                                            className="p-1 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
-                                                          >
-                                                            <Edit2 className="w-3 h-3" />
-                                                          </button>
-                                                          <button
-                                                            onClick={() => deleteTask(tsk.id)}
-                                                            className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
-                                                          >
-                                                            <Trash2 className="w-3 h-3" />
-                                                          </button>
-                                                        </div>
-                                                      </div>
-
-                                                      {/* Level 6: Sub-works */}
-                                                      {isTaskExpanded && (
-                                                        <div className="divide-y divide-[#F1F5F9] bg-[#FFFBEB]/30">
-                                                          {taskSubworks.map((sw) => (
-                                                            <div
-                                                              key={sw.id}
-                                                              className="py-2 px-4 pl-32 flex items-center justify-between hover:bg-amber-100/30 transition-colors gap-2 text-xs"
-                                                            >
-                                                              <div className="flex items-center gap-2 overflow-hidden">
-                                                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-sm bg-amber-100 text-amber-900">
-                                                                  {sw.wbsNumber}
-                                                                </span>
-
-                                                                <span className="text-xs text-[#0F172A] font-medium truncate">
-                                                                  {sw.workDescription}
-                                                                </span>
-
-                                                                <span className="text-[11px] font-mono text-[#64748B]">
-                                                                  PO: {sw.poNumber}
-                                                                </span>
-
-                                                                <span className="text-[11px] text-[#475569] hidden md:inline">
-                                                                  ({sw.supplierName} • {sw.bpCode})
-                                                                </span>
-                                                              </div>
-
-                                                              <div className="flex items-center gap-3 shrink-0">
-                                                                <span className="font-mono font-bold text-blue-700">
-                                                                  {formatINR(sw.poValueGst)}
-                                                                </span>
-
-                                                                <StatusBadge status={sw.status} />
-
-                                                                <button
-                                                                  onClick={() => {
-                                                                    setSubToEdit(sw)
-                                                                    setIsSubModalOpen(true)
-                                                                  }}
-                                                                  className="p-1 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
-                                                                >
-                                                                  <Edit2 className="w-3 h-3" />
-                                                                </button>
-                                                                <button
-                                                                  onClick={() => deleteSubWork(sw.id)}
-                                                                  className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
-                                                                >
-                                                                  <Trash2 className="w-3 h-3" />
-                                                                </button>
-                                                              </div>
-                                                            </div>
-                                                          ))}
-                                                        </div>
-                                                      )}
-                                                    </div>
-                                                  )
-                                                })}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-
-                  {/* Direct Project Sections (if any without partId) */}
-                  {projDirectSections.map((sec) => {
-                    const isSecExpanded = expandedNodes[sec.id] ?? true
-                    const secTasks = tasks.filter(t => t.sectionId === sec.id)
-
-                    return (
-                      <div key={sec.id} className="bg-white">
-                        <div className="py-2.5 px-4 pl-8 flex items-center justify-between hover:bg-[#F8FAFC] transition-colors gap-2">
-                          <div className="flex items-center gap-2.5 overflow-hidden">
-                            <button
-                              onClick={() => toggleExpand(sec.id)}
-                              className="p-1 rounded-sm hover:bg-slate-200 text-slate-700 cursor-pointer"
-                            >
-                              {isSecExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                            </button>
-
-                            <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded-sm bg-slate-200 text-slate-800">
-                              {sec.wbsNumber}
-                            </span>
-
-                            <div className="truncate">
-                              <span className="text-xs font-semibold text-[#0F172A]">
-                                {sec.name}
-                              </span>
-                              {sec.description && (
-                                <span className="text-[11px] text-[#64748B] ml-2 hidden sm:inline truncate">
-                                  — {sec.description}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-[11px] px-2"
-                              leftIcon={<Plus className="w-3 h-3 text-emerald-600" />}
-                              onClick={() => {
-                                setTaskToEdit(null)
-                                setTaskDefaultProj(proj.id)
-                                setTaskDefaultSec(sec.id)
-                                setTaskDefaultMs('')
-                                setIsTaskModalOpen(true)
-                              }}
-                            >
-                              Add Work Package
-                            </Button>
-                            <button
-                              onClick={() => {
-                                setSecToEdit(sec)
-                                setIsSecModalOpen(true)
-                              }}
-                              className="p-1 text-[#64748B] hover:text-[#0F172A] cursor-pointer"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => deleteSection(sec.id)}
-                              className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Direct Tasks under Section */}
-                        {isSecExpanded && (
-                          <div className="divide-y divide-[#F1F5F9] bg-white">
-                            {secTasks.map((tsk) => {
-                              const isTaskExpanded = expandedNodes[tsk.id] ?? true
-                              const taskSubworks = subWorks.filter(sw => sw.taskId === tsk.id)
-
-                              return (
-                                <div key={tsk.id}>
-                                  <div className="py-2 px-4 pl-16 flex items-center justify-between hover:bg-emerald-50/30 transition-colors gap-2">
-                                    <div className="flex items-center gap-2 overflow-hidden">
-                                      <button
-                                        onClick={() => toggleExpand(tsk.id)}
-                                        className="p-1 rounded-sm hover:bg-emerald-100 text-emerald-700 cursor-pointer"
-                                      >
-                                        {isTaskExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                                      </button>
-                                      <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded-sm bg-emerald-100 text-emerald-800">
-                                        {tsk.wbsNumber}
-                                      </span>
-                                      <span className="text-xs font-semibold text-[#0F172A] truncate">
-                                        {tsk.name}
-                                      </span>
-                                      <StatusBadge status={tsk.status} />
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-6 text-[10px] px-2 text-amber-800 hover:bg-amber-50"
-                                        leftIcon={<Plus className="w-3 h-3 text-amber-600" />}
-                                        onClick={() => {
-                                          setSubToEdit(null)
-                                          setSubDefaultProj(proj.id)
-                                          setSubDefaultSec(sec.id)
-                                          setSubDefaultMs('')
-                                          setSubDefaultTask(tsk.id)
-                                          setIsSubModalOpen(true)
-                                        }}
-                                      >
-                                        Add Sub-work
-                                      </Button>
-                                    </div>
-                                  </div>
-
-                                  {isTaskExpanded && (
-                                    <div className="divide-y divide-[#F1F5F9] bg-[#FFFBEB]/30">
-                                      {taskSubworks.map((sw) => (
-                                        <div
-                                          key={sw.id}
-                                          className="py-2 px-4 pl-24 flex items-center justify-between hover:bg-amber-100/30 transition-colors gap-2 text-xs"
-                                        >
-                                          <div className="flex items-center gap-2 overflow-hidden">
-                                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-sm bg-amber-100 text-amber-900">
-                                              {sw.wbsNumber}
-                                            </span>
-                                            <span className="text-xs text-[#0F172A] font-medium truncate">
-                                              {sw.workDescription}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center gap-3 shrink-0">
-                                            <span className="font-mono font-bold text-blue-700">
-                                              {formatINR(sw.poValueGst)}
-                                            </span>
-                                            <StatusBadge status={sw.status} />
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </Card>
-          )
-        })}
-      </div>
-
-      {/* Modals */}
+      <ProjectModal isOpen={modal?.type === 'project'} onClose={closeModal} />
       <PhaseModal
-        isOpen={isPhaseModalOpen}
-        onClose={() => setIsPhaseModalOpen(false)}
-        phaseToEdit={phaseToEdit}
-        defaultProjectId={phaseDefaultProj}
+        isOpen={modal?.type === 'phase'}
+        onClose={closeModal}
+        phaseToEdit={modal?.type === 'phase' ? (modal.edit ?? null) : null}
+        defaultProjectId={modal?.type === 'phase' ? modal.projectId : undefined}
       />
-
       <PartModal
-        isOpen={isPartModalOpen}
-        onClose={() => setIsPartModalOpen(false)}
-        partToEdit={partToEdit}
-        defaultProjectId={partDefaultProj}
-        defaultPhaseId={partDefaultPhase}
+        isOpen={modal?.type === 'part'}
+        onClose={closeModal}
+        partToEdit={modal?.type === 'part' ? (modal.edit ?? null) : null}
+        defaultProjectId={modal?.type === 'part' ? modal.projectId : undefined}
+        defaultPhaseId={modal?.type === 'part' ? modal.phaseId : undefined}
       />
-
       <SectionModal
-        isOpen={isSecModalOpen}
-        onClose={() => setIsSecModalOpen(false)}
-        sectionToEdit={secToEdit}
-        defaultProjectId={secDefaultProj}
-        defaultPartId={secDefaultPart}
+        isOpen={modal?.type === 'section'}
+        onClose={closeModal}
+        sectionToEdit={modal?.type === 'section' ? (modal.edit ?? null) : null}
+        defaultProjectId={modal?.type === 'section' ? modal.projectId : undefined}
+        defaultPartId={modal?.type === 'section' ? modal.partId : undefined}
       />
-
-      <MilestoneModal
-        isOpen={isMsModalOpen}
-        onClose={() => setIsMsModalOpen(false)}
-        milestoneToEdit={msToEdit}
-        defaultProjectId={msDefaultProj}
-        defaultSectionId={msDefaultSec}
-      />
-
       <TaskModal
-        isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
-        taskToEdit={taskToEdit}
-        defaultProjectId={taskDefaultProj}
-        defaultSectionId={taskDefaultSec}
-        defaultMilestoneId={taskDefaultMs}
+        isOpen={modal?.type === 'task'}
+        onClose={closeModal}
+        taskToEdit={modal?.type === 'task' ? (modal.edit ?? null) : null}
+        defaultProjectId={modal?.type === 'task' ? modal.projectId : undefined}
+        defaultSectionId={modal?.type === 'task' ? modal.sectionId : undefined}
       />
-
       <SubWorkModal
-        isOpen={isSubModalOpen}
-        onClose={() => setIsSubModalOpen(false)}
-        subWorkToEdit={subToEdit}
-        defaultProjectId={subDefaultProj}
-        defaultSectionId={subDefaultSec}
-        defaultMilestoneId={subDefaultMs}
-        defaultTaskId={subDefaultTask}
+        isOpen={modal?.type === 'po'}
+        onClose={closeModal}
+        subWorkToEdit={modal?.type === 'po' ? (modal.edit ?? null) : null}
+        defaultTaskId={modal?.type === 'po' ? modal.taskId : undefined}
       />
+      <RaisePrModal isOpen={modal?.type === 'pr'} onClose={closeModal} defaultTaskId={modal?.type === 'pr' ? modal.taskId : undefined} />
     </div>
   )
 }

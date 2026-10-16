@@ -170,7 +170,7 @@ export const TeamMemberModal: React.FC<TeamMemberModalProps> = ({
           required
         />
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-[#F1F5F9]">
+        <div className="flex justify-end gap-3 pt-3 border-t border-slate-200/70">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

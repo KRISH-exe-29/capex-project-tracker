@@ -1,223 +1,197 @@
-import React, { useState, useMemo } from 'react'
-import {
-  Plus,
-  Search,
-  Filter,
-  Download,
-  Eye,
-  Trash2,
-  Edit2
-} from 'lucide-react'
+import React, { useMemo, useState } from 'react'
+import { FileText, Info, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Card } from '../../common/Card'
 import { Button } from '../../common/Button'
 import { StatusBadge } from '../../common/Badge'
 import { EmptyState } from '../../common/EmptyState'
+import { IconButton } from '../../common/IconButton'
+import { ConfirmDialog } from '../../common/ConfirmDialog'
+import { PageHeader } from '../../common/PageHeader'
+import { FilterSelect, SearchInput, Toolbar } from '../../common/Toolbar'
 import { DocumentModal } from './DocumentModal'
-import { DocumentPreviewModal } from './DocumentPreviewModal'
 import { useCapex } from '../../../context/CapexContext'
-import { ProjectDocument } from '../../../types/capex'
+import type { DocumentCategory, ProjectDocument } from '../../../types/capex'
 import { formatDate } from '../../../utils/formatters'
+
+const CATEGORIES: DocumentCategory[] = [
+  'Capex Proposal',
+  'Quote Comparison',
+  'Purchase Requisition',
+  'PO Copy',
+  'GRN',
+  'Invoice',
+  'Approval Note',
+  'Vendor Contract',
+  'Technical Drawing',
+  'Inspection Report'
+]
 
 export const DocumentView: React.FC = () => {
   const {
-    documents,
     filteredDocuments,
     projects,
+    tasks,
+    purchaseRequisitions,
+    subWorks,
     deleteDocument,
-    selectedProjectId,
-    addToast
+    hasPermission,
+    openRecord
   } = useCapex()
 
-  const [searchTerm, setSearchTerm] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState('ALL')
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [docToEdit, setDocToEdit] = useState<ProjectDocument | null>(null)
-  const [previewDoc, setPreviewDoc] = useState<ProjectDocument | null>(null)
+  const [search, setSearch] = useState('')
+  const [category, setCategory] = useState('ALL')
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<ProjectDocument | null>(null)
+  const [deleting, setDeleting] = useState<ProjectDocument | null>(null)
 
-  const displayedDocs = useMemo(() => {
-    return filteredDocuments.filter(d => {
-      const proj = projects.find(p => p.id === d.projectId)
-      const matchesSearch =
-        d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        d.uploadedBy.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (proj && proj.name.toLowerCase().includes(searchTerm.toLowerCase()))
+  const canCreate = hasPermission('document', 'create')
+  const canEdit = hasPermission('document', 'edit')
+  const canDelete = hasPermission('document', 'delete')
 
-      const matchesCat = categoryFilter === 'ALL' || d.category === categoryFilter
-      return matchesSearch && matchesCat
+  const linkLabel = (doc: ProjectDocument): { text: string; open?: () => void } => {
+    if (doc.wbsType === 'Sub-work') {
+      const po = subWorks.find(item => item.id === doc.wbsRecordId)
+      return po
+        ? { text: `PO ${po.poNumber}`, open: () => openRecord('procurement-dossier', po.id) }
+        : { text: 'PO (removed)' }
+    }
+    if (doc.wbsType === 'Purchase Requisition') {
+      const pr = purchaseRequisitions.find(item => item.id === doc.wbsRecordId)
+      return pr ? { text: pr.prNumber, open: () => openRecord('procurement-pr', pr.id) } : { text: 'PR (removed)' }
+    }
+    if (doc.wbsType === 'Task') {
+      const task = tasks.find(item => item.id === doc.wbsRecordId)
+      return { text: task ? `${task.wbsNumber} ${task.name}` : 'Work package (removed)' }
+    }
+    return { text: 'Project' }
+  }
+
+  const rows = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    return filteredDocuments.filter(doc => {
+      if (category !== 'ALL' && doc.category !== category) return false
+      return !needle || `${doc.name} ${doc.uploadedBy} ${doc.category}`.toLowerCase().includes(needle)
     })
-  }, [filteredDocuments, searchTerm, categoryFilter, projects])
+  }, [filteredDocuments, search, category])
 
-  const handleCreate = () => {
-    setDocToEdit(null)
-    setIsModalOpen(true)
-  }
-
-  const handleEdit = (doc: ProjectDocument) => {
-    setDocToEdit(doc)
-    setIsModalOpen(true)
-  }
-
-  const handleDownload = (doc: ProjectDocument) => {
-    addToast(`Downloading "${doc.name}" (${doc.fileSize})...`, 'info')
+  const openCreate = () => {
+    setEditing(null)
+    setModalOpen(true)
   }
 
   return (
     <div className="space-y-6">
-      {/* Header Action */}
-      <div className="flex justify-end">
-        <Button
-          variant="primary"
-          onClick={handleCreate}
-          leftIcon={<Plus className="w-4 h-4" />}
-        >
-          Upload Document
-        </Button>
+      <PageHeader
+        eyebrow="Records"
+        title="Documents"
+        description="Capex proposals, quote comparisons, PO copies, GRNs and invoices, each linked to the PR or PO it supports."
+        actions={
+          canCreate &&
+          projects.length > 0 && (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+              Add document
+            </Button>
+          )
+        }
+      />
+
+      <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-900">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>This version stores the document register (name, type, link, status), not the file itself. Keep the file in its usual location until the server version adds file storage.</p>
       </div>
 
-      {/* Filter and Search Bar */}
-      <Card noPadding className="p-4">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 text-[#94A3B8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search by file name, author, or project..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-10 pl-9 pr-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+      <Card noPadding>
+        <Toolbar>
+          <SearchInput value={search} onChange={setSearch} placeholder="Search document name, category or uploader…" />
+          <FilterSelect
+            label="Category"
+            value={category}
+            onChange={setCategory}
+            options={[{ value: 'ALL', label: 'All' }, ...CATEGORIES.map(item => ({ value: item, label: item }))]}
+          />
+        </Toolbar>
+
+        {rows.length === 0 ? (
+          <div className="p-5">
+            <EmptyState
+              icon={<FileText className="h-6 w-6" />}
+              title={filteredDocuments.length ? 'No documents match' : 'No documents yet'}
+              description={
+                filteredDocuments.length
+                  ? 'Change the search or category filter.'
+                  : 'Register the capex proposal, quote comparison and PO copy for each purchase order.'
+              }
+              actionLabel={!filteredDocuments.length && projects.length && canCreate ? 'Add document' : undefined}
+              onAction={openCreate}
             />
           </div>
-
-          <div className="flex items-center gap-2.5 w-full md:w-auto">
-            <Filter className="w-3.5 h-3.5 text-[#64748B]" />
-            <span className="text-xs text-[#64748B] font-medium">Category:</span>
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-10 px-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 cursor-pointer"
-            >
-              <option value="ALL">All Categories ({filteredDocuments.length})</option>
-              <option value="Approval Note">Approval Notes</option>
-              <option value="Vendor Contract">Vendor Contracts</option>
-              <option value="PO Copy">PO Copies</option>
-              <option value="Technical Drawing">Technical Drawings</option>
-              <option value="Invoice">Invoices / RA Bills</option>
-              <option value="Inspection Report">Inspection Reports</option>
-            </select>
-          </div>
-        </div>
-      </Card>
-
-      {/* Table */}
-      <Card noPadding className="overflow-hidden">
-        {displayedDocs.length === 0 ? (
-          <EmptyState
-            title="No Documents Found"
-            description="No documents match your filter. Upload engineering drawings, approval notes, or vendor POs."
-            actionLabel="Upload Document"
-            onAction={handleCreate}
-          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="table-wrap">
+            <table className="data-table">
               <thead>
-                <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-semibold text-[#475569] uppercase tracking-wider sticky top-0 z-10">
-                  <th className="py-3 px-4">Document Title</th>
-                  <th className="py-3 px-3">Project Association</th>
-                  <th className="py-3 px-3">Category</th>
-                  <th className="py-3 px-3">WBS Tier</th>
-                  <th className="py-3 px-3">Format / Size</th>
-                  <th className="py-3 px-3">Uploaded Date</th>
-                  <th className="py-3 px-3 text-center">Status</th>
-                  <th className="py-3 px-4 text-center">Actions</th>
+                <tr>
+                  <th>Document</th>
+                  <th>Category</th>
+                  <th>Linked to</th>
+                  <th>Uploaded</th>
+                  <th>Status</th>
+                  <th className="actions">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#F1F5F9] text-xs text-[#0F172A]">
-                {displayedDocs.map((doc) => {
-                  const proj = projects.find(p => p.id === doc.projectId)
-
+              <tbody>
+                {rows.map(doc => {
+                  const link = linkLabel(doc)
+                  const project = projects.find(item => item.id === doc.projectId)
                   return (
-                    <tr key={doc.id} className="hover:bg-[#F8FAFC]/80 transition-colors">
-                      {/* Name */}
-                      <td className="py-3.5 px-4 max-w-sm">
-                        <div className="flex items-center gap-2.5">
-                          <span className="w-8 h-8 rounded-md bg-blue-50 text-blue-700 font-bold text-[10px] flex items-center justify-center shrink-0 border border-blue-200">
+                    <tr key={doc.id}>
+                      <td className="max-w-[300px]">
+                        <div className="flex items-start gap-2.5">
+                          <span className="mono-num shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
                             {doc.fileType}
                           </span>
-                          <div className="truncate">
-                            <p className="font-semibold text-[#0F172A] truncate">
-                              {doc.name}
-                            </p>
-                            <p className="text-[11px] text-[#64748B]">
-                              by {doc.uploadedBy}
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-slate-900">{doc.name}</p>
+                            <p className="text-xs text-slate-500">
+                              {project?.code} · {doc.fileSize}
                             </p>
                           </div>
                         </div>
                       </td>
-
-                      {/* Project */}
-                      <td className="py-3.5 px-3 max-w-[200px] truncate text-[#475569]">
-                        {proj ? proj.name : 'All Projects'}
+                      <td className="whitespace-nowrap">{doc.category}</td>
+                      <td className="max-w-[200px]">
+                        {link.open ? (
+                          <button onClick={link.open} className="mono-num truncate text-xs font-medium text-blue-700 hover:underline">
+                            {link.text}
+                          </button>
+                        ) : (
+                          <span className="truncate text-xs text-slate-600">{link.text}</span>
+                        )}
                       </td>
-
-                      {/* Category */}
-                      <td className="py-3.5 px-3 whitespace-nowrap">
-                        <span className="text-[11px] font-medium text-[#334155] bg-slate-100 px-2 py-0.5 rounded-[4px] border border-slate-200">
-                          {doc.category}
-                        </span>
+                      <td className="whitespace-nowrap">
+                        <div>{formatDate(doc.uploadDate)}</div>
+                        <div className="text-xs text-slate-500">{doc.uploadedBy}</div>
                       </td>
-
-                      {/* WBS Tier */}
-                      <td className="py-3.5 px-3 whitespace-nowrap text-[#64748B]">
-                        {doc.wbsType}
-                      </td>
-
-                      {/* Size */}
-                      <td className="py-3.5 px-3 whitespace-nowrap font-mono text-xs text-[#64748B]">
-                        {doc.fileSize}
-                      </td>
-
-                      {/* Date */}
-                      <td className="py-3.5 px-3 whitespace-nowrap text-[#64748B]">
-                        {formatDate(doc.uploadDate)}
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-3.5 px-3 text-center whitespace-nowrap">
+                      <td>
                         <StatusBadge status={doc.status} />
                       </td>
-
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => setPreviewDoc(doc)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-[4px] cursor-pointer"
-                            title="Preview Document"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDownload(doc)}
-                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-[4px] cursor-pointer"
-                            title="Download Document"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleEdit(doc)}
-                            className="p-1.5 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-[4px] cursor-pointer"
-                            title="Edit Metadata"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => deleteDocument(doc.id)}
-                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-[4px] cursor-pointer"
-                            title="Delete Document"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                      <td className="actions">
+                        <div className="flex justify-end gap-1">
+                          {canEdit && (
+                            <IconButton
+                              label="Edit document"
+                              onClick={() => {
+                                setEditing(doc)
+                                setModalOpen(true)
+                              }}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </IconButton>
+                          )}
+                          {canDelete && (
+                            <IconButton label="Delete document" tone="danger" onClick={() => setDeleting(doc)}>
+                              <Trash2 className="h-4 w-4" />
+                            </IconButton>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -229,19 +203,14 @@ export const DocumentView: React.FC = () => {
         )}
       </Card>
 
-      {/* Upload/Edit Modal */}
-      <DocumentModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        docToEdit={docToEdit}
-      />
-
-      {/* Preview Modal */}
-      <DocumentPreviewModal
-        isOpen={!!previewDoc}
-        onClose={() => setPreviewDoc(null)}
-        doc={previewDoc}
-        onDownload={handleDownload}
+      <DocumentModal isOpen={modalOpen} onClose={() => setModalOpen(false)} docToEdit={editing} />
+      <ConfirmDialog
+        isOpen={deleting !== null}
+        title={`Delete ${deleting?.name ?? 'document'}?`}
+        message="The document is removed from the register and stops counting as evidence for its PR or PO. This is recorded in the Activity Log."
+        confirmLabel="Delete document"
+        onConfirm={() => deleting && deleteDocument(deleting.id)}
+        onClose={() => setDeleting(null)}
       />
     </div>
   )

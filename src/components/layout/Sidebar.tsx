@@ -1,40 +1,48 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import {
-  LayoutDashboard,
-  CalendarRange,
-  FolderKanban,
-  CheckSquare,
-  Network,
-  Users2,
-  FileSpreadsheet,
-  Receipt,
-  Wallet,
-  FileText,
-  ShieldCheck,
-  ChevronDown,
-  ChevronRight,
-  Layers,
-  ChevronLeft,
+  AlertTriangle,
   BriefcaseBusiness,
-  Coins
+  CalendarRange,
+  CheckSquare,
+  ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
+  ClipboardList,
+  FileSearch,
+  FileSpreadsheet,
+  FileText,
+  Flag,
+  FolderKanban,
+  History,
+  Layers,
+  LayoutDashboard,
+  Network,
+  Receipt,
+  ShieldCheck,
+  Users2,
+  Wallet,
+  X
 } from 'lucide-react'
 import { useCapex } from '../../context/CapexContext'
-import { ActiveModule } from '../../types/capex'
+import type { ActiveModule } from '../../types/capex'
+import { getExceptions } from '../../utils/exceptions'
 import { cn } from '../../utils/cn'
+import { Logo } from './Logo'
 
 interface NavItem {
   id: ActiveModule
   label: string
   icon: React.ReactNode
-  badge?: string | number
+  badge?: number
+  alert?: boolean
 }
 
-interface NavSection {
+interface NavGroup {
   title: string
-  icon: React.ReactNode
   items: NavItem[]
-  defaultOpen?: boolean
 }
+
+const ICON = 'h-4 w-4'
 
 export const Sidebar: React.FC = () => {
   const {
@@ -42,221 +50,237 @@ export const Sidebar: React.FC = () => {
     setActiveModule,
     sidebarCollapsed,
     setSidebarCollapsed,
+    mobileNavOpen,
+    setMobileNavOpen,
     projects,
-    tasks,
-    subWorks,
-    documents
+    filteredTasks,
+    filteredSubWorks,
+    filteredPrs,
+    documents,
+    budgetRevisions
   } = useCapex()
 
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    Planning: true,
-    Operation: true,
-    Finance: true,
-    'Access & RBAC': true
-  })
+  const [closedGroups, setClosedGroups] = useState<Record<string, boolean>>({})
 
-  const toggleSection = (section: string) => {
-    setOpenSections(prev => ({ ...prev, [section]: !prev[section] }))
-  }
+  const exceptionCount = useMemo(
+    () =>
+      getExceptions({
+        tasks: filteredTasks,
+        subWorks: filteredSubWorks,
+        purchaseRequisitions: filteredPrs,
+        documents,
+        budgetRevisions: budgetRevisions.filter(revision => filteredTasks.some(task => task.id === revision.taskId))
+      }).length,
+    [filteredTasks, filteredSubWorks, filteredPrs, documents, budgetRevisions]
+  )
+  const pendingApprovals =
+    filteredPrs.filter(pr => pr.status === 'Pending Approval').length +
+    budgetRevisions.filter(
+      revision => revision.status === 'Pending' && filteredTasks.some(task => task.id === revision.taskId)
+    ).length
 
-  const sections: NavSection[] = [
+  const groups: NavGroup[] = [
+    {
+      title: 'Overview',
+      items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className={ICON} /> }]
+    },
     {
       title: 'Planning',
-      icon: <CalendarRange className="w-4 h-4 text-blue-600" />,
-      defaultOpen: true,
       items: [
-        { id: 'planning-project', label: 'Project', icon: <FolderKanban className="w-4 h-4" />, badge: projects.length },
-        { id: 'planning-wbs', label: 'Project WBS', icon: <Network className="w-4 h-4" /> },
-        { id: 'planning-milestone', label: 'Section', icon: <Layers className="w-4 h-4" /> },
-        { id: 'planning-task', label: 'Work Package', icon: <CheckSquare className="w-4 h-4" />, badge: tasks.length },
-        { id: 'planning-subwork', label: 'Sub-work', icon: <BriefcaseBusiness className="w-4 h-4" />, badge: subWorks.length },
-        { id: 'planning-gantt', label: 'Gantt Chart', icon: <CalendarRange className="w-4 h-4" /> },
+        { id: 'planning-project', label: 'Projects', icon: <FolderKanban className={ICON} />, badge: projects.length },
+        { id: 'planning-wbs', label: 'Project WBS', icon: <Network className={ICON} /> },
+        { id: 'planning-section', label: 'Sections', icon: <Layers className={ICON} /> },
+        { id: 'planning-task', label: 'Work Packages', icon: <CheckSquare className={ICON} />, badge: filteredTasks.length },
+        {
+          id: 'planning-subwork',
+          label: 'Purchase Orders',
+          icon: <BriefcaseBusiness className={ICON} />,
+          badge: filteredSubWorks.length
+        },
+        { id: 'planning-milestone', label: 'Milestones', icon: <Flag className={ICON} /> },
+        { id: 'planning-gantt', label: 'Gantt Chart', icon: <CalendarRange className={ICON} /> }
       ]
     },
     {
-      title: 'Operation',
-      icon: <Users2 className="w-4 h-4 text-emerald-600" />,
-      defaultOpen: true,
+      title: 'Procurement',
       items: [
-        { id: 'operation-team', label: 'Team', icon: <Users2 className="w-4 h-4" /> },
-        { id: 'operation-dpr', label: 'DPR', icon: <FileSpreadsheet className="w-4 h-4" /> },
+        {
+          id: 'procurement-pr',
+          label: 'Requisitions',
+          icon: <ClipboardList className={ICON} />,
+          badge: pendingApprovals || undefined,
+          alert: pendingApprovals > 0
+        },
+        { id: 'procurement-dossier', label: 'PO Dossier', icon: <FileSearch className={ICON} /> },
+        {
+          id: 'procurement-exceptions',
+          label: 'Exceptions',
+          icon: <AlertTriangle className={ICON} />,
+          badge: exceptionCount || undefined,
+          alert: exceptionCount > 0
+        }
       ]
     },
     {
       title: 'Finance',
-      icon: <Coins className="w-4 h-4 text-amber-600" />,
-      defaultOpen: true,
       items: [
-        { id: 'finance-billing', label: 'Billing', icon: <Receipt className="w-4 h-4" /> },
-        { id: 'finance-budget', label: 'Budget', icon: <Wallet className="w-4 h-4" /> },
+        { id: 'finance-budget', label: 'Budget', icon: <Wallet className={ICON} /> },
+        { id: 'finance-billing', label: 'Billing', icon: <Receipt className={ICON} /> }
       ]
     },
     {
-      title: 'Access & RBAC',
-      icon: <ShieldCheck className="w-4 h-4 text-purple-600" />,
-      defaultOpen: true,
+      title: 'Operation',
       items: [
-        { id: 'access-users', label: 'User Roles', icon: <Users2 className="w-4 h-4" /> },
-        { id: 'access-matrix', label: 'User Matrix', icon: <ShieldCheck className="w-4 h-4" /> },
+        { id: 'operation-team', label: 'Team', icon: <Users2 className={ICON} /> },
+        { id: 'operation-dpr', label: 'Daily Progress', icon: <FileSpreadsheet className={ICON} /> }
+      ]
+    },
+    {
+      title: 'Records',
+      items: [
+        { id: 'document', label: 'Documents', icon: <FileText className={ICON} />, badge: documents.length },
+        { id: 'audit-log', label: 'Activity Log', icon: <History className={ICON} /> }
+      ]
+    },
+    {
+      title: 'Access',
+      items: [
+        { id: 'access-users', label: 'Users & Roles', icon: <Users2 className={ICON} /> },
+        { id: 'access-matrix', label: 'Permission Matrix', icon: <ShieldCheck className={ICON} /> }
       ]
     }
   ]
 
+  // On small screens the sidebar is an overlay and always shows labels.
+  const compact = sidebarCollapsed && !mobileNavOpen
+
   return (
-    <aside
-      className={cn(
-        'fixed top-0 left-0 h-screen bg-white border-r border-[#E2E8F0] z-30 flex flex-col transition-all duration-300 ease-in-out',
-        sidebarCollapsed ? 'w-[72px]' : 'w-[260px]'
+    <>
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-[2px] lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
       )}
-    >
-      {/* Navigation Scroll Area */}
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-        {/* 1. Dashboard (Always top item) */}
-        <div className="space-y-1">
+
+      <aside
+        className={cn(
+          'glass-strong fixed inset-y-0 left-0 z-40 flex flex-col border-r border-white/70 transition-[width,transform] duration-300 ease-in-out',
+          'w-[260px] lg:translate-x-0',
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
+          sidebarCollapsed && 'lg:w-[72px]'
+        )}
+        aria-label="Main navigation"
+      >
+        {/* Brand row: same 64px height and bottom border as the header */}
+        <div
+          className={cn(
+            'flex h-16 shrink-0 items-center border-b border-slate-200/70',
+            compact ? 'justify-center px-2' : 'justify-between px-5'
+          )}
+        >
+          <Logo collapsed={compact} />
           <button
-            onClick={() => setActiveModule('dashboard')}
-            className={cn(
-              'w-full flex items-center gap-3 px-3 py-2.5 rounded-[6px] text-sm font-medium transition-colors cursor-pointer group',
-              activeModule === 'dashboard'
-                ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-xs'
-                : 'text-[#334155] hover:bg-[#F8FAFC] hover:text-[#0F172A]'
-            )}
-            title={sidebarCollapsed ? 'Dashboard' : undefined}
+            type="button"
+            onClick={() => setMobileNavOpen(false)}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
+            aria-label="Close navigation"
           >
-            <LayoutDashboard className={cn(
-              'w-4 h-4 shrink-0',
-              activeModule === 'dashboard' ? 'text-blue-600' : 'text-[#64748B] group-hover:text-[#0F172A]'
-            )} />
-            {!sidebarCollapsed && <span className="truncate">Dashboard</span>}
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Dynamic Nav Groups: Planning, Operation, Finance */}
-        {sections.map(section => {
-          const isOpen = openSections[section.title] ?? true
-          const hasActiveChild = section.items.some(item => item.id === activeModule)
+        <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
+          {groups.map(group => {
+            const closed = closedGroups[group.title] && !compact
+            return (
+              <div key={group.title}>
+                {compact ? (
+                  group.title !== 'Overview' && <div className="mx-2 mb-2 h-px bg-slate-200/80" />
+                ) : (
+                  group.title !== 'Overview' && (
+                    <button
+                      type="button"
+                      onClick={() => setClosedGroups(prev => ({ ...prev, [group.title]: !prev[group.title] }))}
+                      className="mb-1 flex w-full items-center justify-between rounded-md px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400 hover:text-slate-600"
+                      aria-expanded={!closed}
+                    >
+                      {group.title}
+                      <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', closed && '-rotate-90')} />
+                    </button>
+                  )
+                )}
 
-          return (
-            <div key={section.title} className="space-y-1 pt-1">
-              {!sidebarCollapsed ? (
-                <button
-                  type="button"
-                  onClick={() => toggleSection(section.title)}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-[#94A3B8] hover:text-[#475569] cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    {section.icon}
-                    <span>{section.title}</span>
-                  </div>
-                  {isOpen ? (
-                    <ChevronDown className="w-3 h-3 text-[#94A3B8]" />
-                  ) : (
-                    <ChevronRight className="w-3 h-3 text-[#94A3B8]" />
-                  )}
-                </button>
-              ) : (
-                <div className="h-px bg-[#E2E8F0] my-2 mx-1" />
-              )}
-
-              {/* Sub-items */}
-              {(isOpen || sidebarCollapsed) && (
-                <div className={cn('space-y-0.5', !sidebarCollapsed && 'pl-1.5')}>
-                  {section.items.map(item => {
-                    const isActive = activeModule === item.id
-
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setActiveModule(item.id)}
-                        className={cn(
-                          'w-full flex items-center justify-between px-3 py-2 rounded-[6px] text-xs font-medium transition-colors cursor-pointer group',
-                          isActive
-                            ? 'bg-blue-600 text-white shadow-xs font-semibold'
-                            : 'text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
-                        )}
-                        title={sidebarCollapsed ? item.label : undefined}
-                      >
-                        <div className="flex items-center gap-2.5 overflow-hidden">
-                          <span className={cn(
-                            'shrink-0',
-                            isActive ? 'text-white' : 'text-[#64748B] group-hover:text-[#0F172A]'
-                          )}>
-                            {item.icon}
-                          </span>
-                          {!sidebarCollapsed && (
-                            <span className="truncate">{item.label}</span>
-                          )}
-                        </div>
-
-                        {!sidebarCollapsed && item.badge !== undefined && (
-                          <span
+                {!closed && (
+                  <ul className="space-y-0.5">
+                    {group.items.map(item => {
+                      const active = activeModule === item.id
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            onClick={() => setActiveModule(item.id)}
+                            title={compact ? item.label : undefined}
+                            aria-current={active ? 'page' : undefined}
                             className={cn(
-                              'text-[10px] font-mono px-1.5 py-0.2 rounded-full font-medium',
-                              isActive 
-                                ? 'bg-blue-800 text-blue-100' 
-                                : 'bg-[#E2E8F0] text-[#475569]'
+                              'group relative flex h-9 w-full items-center gap-3 rounded-lg text-[13px] font-medium transition-colors',
+                              compact ? 'justify-center px-0' : 'px-3',
+                              active
+                                ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/25'
+                                : 'text-slate-600 hover:bg-white/80 hover:text-slate-900'
                             )}
                           >
-                            {item.badge}
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        })}
+                            {active && !compact && (
+                              <span className="absolute -left-3 top-1.5 bottom-1.5 w-1 rounded-r bg-brand-red" />
+                            )}
+                            <span className={cn('shrink-0', active ? 'text-white' : 'text-slate-400 group-hover:text-slate-700')}>
+                              {item.icon}
+                            </span>
+                            {!compact && <span className="flex-1 truncate text-left">{item.label}</span>}
+                            {!compact && item.badge !== undefined && (
+                              <span
+                                className={cn(
+                                  'mono-num min-w-[1.5rem] rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold',
+                                  active
+                                    ? 'bg-white/20 text-white'
+                                    : item.alert
+                                      ? 'bg-rose-100 text-rose-700'
+                                      : 'bg-slate-200/80 text-slate-600'
+                                )}
+                              >
+                                {item.badge}
+                              </span>
+                            )}
+                            {compact && item.alert && (
+                              <span className="absolute right-2 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
+                            )}
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+            )
+          })}
+        </nav>
 
-        {/* 5. Document Management */}
-        <div className="space-y-1 pt-1">
-          {!sidebarCollapsed && (
-            <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">
-              Repository
-            </div>
-          )}
+        <div className="hidden shrink-0 border-t border-slate-200/70 p-3 lg:block">
           <button
-            onClick={() => setActiveModule('document')}
+            type="button"
+            onClick={() => setSidebarCollapsed(value => !value)}
             className={cn(
-              'w-full flex items-center justify-between px-3 py-2 rounded-[6px] text-xs font-medium transition-colors cursor-pointer group',
-              activeModule === 'document'
-                ? 'bg-blue-600 text-white shadow-xs font-semibold'
-                : 'text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]'
+              'flex h-9 w-full items-center gap-3 rounded-lg text-[13px] font-medium text-slate-500 hover:bg-white/80 hover:text-slate-900',
+              sidebarCollapsed ? 'justify-center' : 'px-3'
             )}
-            title={sidebarCollapsed ? 'Documents' : undefined}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <div className="flex items-center gap-2.5 overflow-hidden">
-              <FileText className={cn(
-                'w-4 h-4 shrink-0',
-                activeModule === 'document' ? 'text-white' : 'text-[#64748B] group-hover:text-[#0F172A]'
-              )} />
-              {!sidebarCollapsed && <span className="truncate">Document</span>}
-            </div>
-            {!sidebarCollapsed && (
-              <span className={cn(
-                'text-[10px] font-mono px-1.5 py-0.2 rounded-full font-medium',
-                activeModule === 'document' ? 'bg-blue-800 text-blue-100' : 'bg-[#E2E8F0] text-[#475569]'
-              )}>
-                {documents.length}
-              </span>
-            )}
+            {sidebarCollapsed ? <ChevronsRight className={ICON} /> : <ChevronsLeft className={ICON} />}
+            {!sidebarCollapsed && 'Collapse'}
           </button>
         </div>
-      </div>
-
-      {/* Sidebar Footer with collapse button for collapsed state */}
-      {sidebarCollapsed && (
-        <div className="p-3 border-t border-[#E2E8F0] flex justify-center">
-          <button
-            onClick={() => setSidebarCollapsed(false)}
-            className="p-2 rounded-[6px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] cursor-pointer"
-            title="Expand Sidebar"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-    </aside>
+      </aside>
+    </>
   )
 }

@@ -147,7 +147,7 @@ export const DprModal: React.FC<DprModalProps> = ({
 
         {/* WBS Task Binding */}
         <Select
-          label="Execution Task (Level 4 WBS)"
+          label="Execution Task"
           {...register('taskId', { required: 'Task is required' })}
           options={availableTasks.map(t => ({ value: t.id, label: `${t.wbsNumber} - ${t.name}` }))}
           error={errors.taskId?.message}
@@ -190,7 +190,7 @@ export const DprModal: React.FC<DprModalProps> = ({
           <textarea
             {...register('workDoneToday', { required: 'Description of work done is required' })}
             rows={3}
-            className="w-full px-3 py-2 text-sm bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+            className="w-full px-3 py-2 text-sm bg-white text-[#0F172A] border border-[#CBD5E1] rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
             placeholder="Specify completed casting, fabrication, testing or structural placement details..."
           />
           {errors.workDoneToday && (
@@ -234,7 +234,7 @@ export const DprModal: React.FC<DprModalProps> = ({
           />
         </div>
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-[#F1F5F9]">
+        <div className="flex justify-end gap-3 pt-3 border-t border-slate-200/70">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

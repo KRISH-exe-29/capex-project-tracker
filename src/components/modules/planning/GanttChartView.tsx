@@ -2,17 +2,11 @@ import React, { useState, useMemo } from 'react'
 import {
   CalendarRange,
   ChevronDown,
-  ChevronRight,
-  Filter,
-  Layers,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
-  ZoomIn,
-  ZoomOut
+  ChevronRight
 } from 'lucide-react'
+import { PageHeader } from '../../common/PageHeader'
+import { EmptyState } from '../../common/EmptyState'
 import { Card } from '../../common/Card'
-import { Button } from '../../common/Button'
 import { StatusBadge } from '../../common/Badge'
 import { useCapex } from '../../../context/CapexContext'
 import { formatDate, getDaysRemaining } from '../../../utils/formatters'
@@ -43,37 +37,46 @@ export const GanttChartView: React.FC = () => {
     selectedProjectId
   } = useCapex()
 
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    'proj-500': true,
-    'phase-501': true,
-    'part-5011': true,
-    'sec-50111': true,
-    'tsk-501111': true,
-    'proj-001': true,
-    'phase-101': true,
-    'part-1011': true,
-    'sec-101': true,
-    'ms-1011': true,
-    'tsk-10111': true
-  })
+  // Everything starts expanded; the map only records nodes the user collapsed.
+  const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({})
+  const isExpanded = (id: string) => !collapsedNodes[id]
 
-  // Timeline range: Fixed 24 months from 2026-01-01 to 2027-12-31
-  const timelineStart = new Date('2026-01-01')
-  const timelineEnd = new Date('2027-12-31')
-  const totalDays = differenceInDays(timelineEnd, timelineStart)
-
-  const months = useMemo(() => {
-    const list = []
-    const cur = new Date('2026-01-01')
-    while (cur <= timelineEnd) {
-      list.push(new Date(cur))
-      cur.setMonth(cur.getMonth() + 1)
+  // Timeline spans the earliest start to the latest target date in the data, whole months, at least 12.
+  const { timelineStart, timelineEnd, months } = useMemo(() => {
+    const dates = [
+      ...projects.flatMap(p => [p.startDate || p.approvedDate, p.endDate]),
+      ...tasks.flatMap(t => [t.startDate, t.targetDate]),
+      ...subWorks.map(sw => sw.targetDate)
+    ]
+      .filter(Boolean)
+      .map(value => parseISO(value as string))
+      .filter(date => !Number.isNaN(date.getTime()))
+    const now = new Date()
+    const min = dates.length ? new Date(Math.min(...dates.map(date => date.getTime()))) : now
+    const max = dates.length ? new Date(Math.max(...dates.map(date => date.getTime()))) : now
+    const start = new Date(min.getFullYear(), min.getMonth(), 1)
+    const end = new Date(max.getFullYear(), max.getMonth() + 1, 0)
+    if ((end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth() < 11) {
+      end.setTime(new Date(start.getFullYear(), start.getMonth() + 12, 0).getTime())
     }
-    return list
-  }, [timelineEnd])
+    const list: Date[] = []
+    const cursor = new Date(start)
+    while (cursor <= end) {
+      list.push(new Date(cursor))
+      cursor.setMonth(cursor.getMonth() + 1)
+    }
+    return { timelineStart: start, timelineEnd: end, months: list }
+  }, [projects, tasks, subWorks])
+  const totalDays = Math.max(1, differenceInDays(timelineEnd, timelineStart))
 
   const toggleExpand = (id: string) => {
-    setExpandedNodes(prev => ({ ...prev, [id]: !prev[id] }))
+    setCollapsedNodes(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  // Progress of a branch = average reported progress of its work packages (0 when it has none).
+  const avgProgress = (match: (task: (typeof tasks)[number]) => boolean) => {
+    const list = tasks.filter(match)
+    return list.length ? Math.round(list.reduce((sum, task) => sum + (task.progress || 0), 0) / list.length) : 0
   }
 
   // Build hierarchical list of visible items
@@ -91,12 +94,12 @@ export const GanttChartView: React.FC = () => {
         name: proj.name,
         startDate: proj.startDate || proj.approvedDate,
         targetDate: proj.endDate,
-        progress: 45, // calculated
+        progress: avgProgress(task => task.projectId === proj.id),
         status: proj.status,
         type: 'Project'
       })
 
-      if (expandedNodes[proj.id]) {
+      if (isExpanded(proj.id)) {
         const projPhases = phases.filter(ph => ph.projectId === proj.id)
 
         if (projPhases.length > 0) {
@@ -109,12 +112,12 @@ export const GanttChartView: React.FC = () => {
               name: ph.name,
               startDate: ph.startDate || proj.approvedDate,
               targetDate: ph.endDate || proj.endDate,
-              progress: 40,
+              progress: avgProgress(task => task.phaseId === ph.id),
               status: ph.status,
               type: 'Phase'
             })
 
-            if (expandedNodes[ph.id]) {
+            if (isExpanded(ph.id)) {
               const phParts = parts.filter(pt => pt.phaseId === ph.id)
               phParts.forEach(pt => {
                 items.push({
@@ -125,12 +128,12 @@ export const GanttChartView: React.FC = () => {
                   name: pt.name,
                   startDate: ph.startDate || proj.approvedDate,
                   targetDate: ph.endDate || proj.endDate,
-                  progress: 35,
+                  progress: avgProgress(task => task.partId === pt.id),
                   status: pt.status,
                   type: 'Part'
                 })
 
-                if (expandedNodes[pt.id]) {
+                if (isExpanded(pt.id)) {
                   const ptSections = sections.filter(s => s.partId === pt.id)
                   ptSections.forEach(sec => {
                     const secTasks = tasks.filter(t => t.sectionId === sec.id)
@@ -145,12 +148,12 @@ export const GanttChartView: React.FC = () => {
                       name: sec.name,
                       startDate: start,
                       targetDate: end,
-                      progress: 40,
+                      progress: avgProgress(task => task.sectionId === sec.id),
                       status: 'In Progress',
                       type: 'Section'
                     })
 
-                    if (expandedNodes[sec.id]) {
+                    if (isExpanded(sec.id)) {
                       secTasks.forEach(tsk => {
                         items.push({
                           id: tsk.id,
@@ -165,7 +168,7 @@ export const GanttChartView: React.FC = () => {
                           type: 'Work Package'
                         })
 
-                        if (expandedNodes[tsk.id]) {
+                        if (isExpanded(tsk.id)) {
                           const tskSubworks = subWorks.filter(sw => sw.taskId === tsk.id)
                           tskSubworks.forEach(sw => {
                             items.push({
@@ -176,7 +179,7 @@ export const GanttChartView: React.FC = () => {
                               name: sw.workDescription,
                               startDate: tsk.startDate,
                               targetDate: sw.targetDate,
-                              progress: sw.status === 'Paid' ? 100 : sw.status === 'Billed' ? 75 : 30,
+                              progress: sw.status === 'Paid' ? 100 : 0,
                               status: sw.status,
                               type: 'Sub-work'
                             })
@@ -206,12 +209,12 @@ export const GanttChartView: React.FC = () => {
             name: sec.name,
             startDate: start,
             targetDate: end,
-            progress: 50,
+            progress: avgProgress(task => task.sectionId === sec.id),
             status: 'In Progress',
             type: 'Section'
           })
 
-          if (expandedNodes[sec.id]) {
+          if (isExpanded(sec.id)) {
             const secTasks = tasks.filter(t => t.sectionId === sec.id)
             secTasks.forEach(tsk => {
               items.push({
@@ -227,7 +230,7 @@ export const GanttChartView: React.FC = () => {
                 type: 'Work Package'
               })
 
-              if (expandedNodes[tsk.id]) {
+              if (isExpanded(tsk.id)) {
                 const tskSubworks = subWorks.filter(sw => sw.taskId === tsk.id)
                 tskSubworks.forEach(sw => {
                   items.push({
@@ -238,7 +241,7 @@ export const GanttChartView: React.FC = () => {
                     name: sw.workDescription,
                     startDate: tsk.startDate,
                     targetDate: sw.targetDate,
-                    progress: sw.status === 'Paid' ? 100 : sw.status === 'Billed' ? 75 : 30,
+                    progress: sw.status === 'Paid' ? 100 : 0,
                     status: sw.status,
                     type: 'Sub-work'
                   })
@@ -251,7 +254,7 @@ export const GanttChartView: React.FC = () => {
     })
 
     return items
-  }, [projects, phases, parts, sections, milestones, tasks, subWorks, selectedProjectId, expandedNodes])
+  }, [projects, phases, parts, sections, milestones, tasks, subWorks, selectedProjectId, collapsedNodes])
 
   // Helper to calculate bar left and width percentages
   const getBarPosition = (startDate: string, targetDate: string) => {
@@ -293,22 +296,14 @@ export const GanttChartView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <CalendarRange className="w-5 h-5 text-indigo-600" />
-            <h2 className="text-xl font-bold text-[#0F172A] font-heading tracking-tight">
-              Interactive Hierarchical Gantt Schedule
-            </h2>
-          </div>
-          <p className="text-xs text-[#64748B] mt-0.5">
-            Synchronized calendar timeline spanning 2026-2027 based on saved WBS milestones, tasks, and PO deadlines.
-          </p>
-        </div>
-
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <PageHeader
+          eyebrow="Planning"
+          title="Gantt Chart"
+          description="Timeline of projects, sections, work packages and PO target dates. Progress is the average reported on work packages."
+        />
         {/* Legend */}
-        <div className="flex flex-wrap items-center gap-3 text-xs bg-white px-3 py-1.5 rounded-[6px] border border-[#E2E8F0] shadow-xs">
+        <div className="glass flex flex-wrap items-center gap-3 rounded-lg px-3 py-2 text-xs">
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-2 rounded-xs bg-blue-600" />
             <span className="text-[#64748B]">Project</span>
@@ -336,8 +331,18 @@ export const GanttChartView: React.FC = () => {
         </div>
       </div>
 
+      {visibleItems.length === 0 && (
+        <Card>
+          <EmptyState
+            icon={<CalendarRange className="h-6 w-6" />}
+            title="Nothing to schedule yet"
+            description="The chart fills in once projects and work packages with dates exist."
+          />
+        </Card>
+      )}
+
       {/* Main Gantt Split Container */}
-      <Card noPadding className="overflow-hidden border-[#CBD5E1]">
+      <Card noPadding className={visibleItems.length ? 'overflow-hidden' : 'hidden'}>
         <div className="flex overflow-x-auto min-w-[950px]">
           {/* Left WBS Hierarchy Column */}
           <div className="w-[380px] shrink-0 border-r border-[#E2E8F0] bg-white sticky left-0 z-20">
@@ -350,7 +355,7 @@ export const GanttChartView: React.FC = () => {
             {/* Tree rows */}
             <div className="divide-y divide-[#F1F5F9]">
               {visibleItems.map(item => {
-                const isExpanded = expandedNodes[item.id]
+                const open = isExpanded(item.id)
                 const hasChildren = item.level < 6
                 const paddingLeft = `${(item.level - 1) * 16 + 12}px`
 
@@ -366,7 +371,7 @@ export const GanttChartView: React.FC = () => {
                           onClick={() => toggleExpand(item.id)}
                           className="p-1 rounded-sm hover:bg-slate-200 text-slate-600 cursor-pointer"
                         >
-                          {isExpanded ? (
+                          {open ? (
                             <ChevronDown className="w-3 h-3" />
                           ) : (
                             <ChevronRight className="w-3 h-3" />
@@ -377,7 +382,7 @@ export const GanttChartView: React.FC = () => {
                       )}
 
                       <span
-                        className={`font-mono text-[10px] font-bold px-1.5 py-0.2 rounded-xs shrink-0 ${
+                        className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-xs shrink-0 ${
                           badgeColors[item.level]
                         }`}
                       >
@@ -425,7 +430,7 @@ export const GanttChartView: React.FC = () => {
               {/* Vertical Grid Columns */}
               <div className="absolute inset-0 flex pointer-events-none">
                 {months.map((_, idx) => (
-                  <div key={idx} className="flex-1 border-r border-[#F1F5F9]" />
+                  <div key={idx} className="flex-1 border-r border-slate-200/70" />
                 ))}
               </div>
 
@@ -442,7 +447,7 @@ export const GanttChartView: React.FC = () => {
                   >
                     {/* The Gantt Bar */}
                     <div
-                      className={`absolute h-6 rounded-[4px] border shadow-xs flex items-center px-2 text-[10px] text-white font-medium overflow-hidden transition-all duration-300 ${
+                      className={`absolute h-6 rounded border shadow-xs flex items-center px-2 text-[10px] text-white font-medium overflow-hidden transition-all duration-300 ${
                         barColors[item.level]
                       }`}
                       style={{
@@ -458,7 +463,7 @@ export const GanttChartView: React.FC = () => {
                       />
 
                       <span className="relative z-10 truncate text-[10px] leading-none drop-shadow-xs">
-                        {item.progress}% {isOverdue ? '⚠️ Overdue' : ''}
+                        {item.progress}%{isOverdue ? ' · overdue' : ''}
                       </span>
                     </div>
                   </div>

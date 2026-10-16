@@ -1,373 +1,218 @@
-import React, { useState, useMemo } from 'react'
-import {
-  Wallet,
-  AlertTriangle,
-  TrendingUp,
-  Download,
-  Building2,
-  ChevronDown,
-  ChevronRight,
-  ShieldCheck,
-  Coins,
-  Receipt,
-  Scale
-} from 'lucide-react'
-import { Card } from '../../common/Card'
+import React, { useMemo } from 'react'
+import { AlertTriangle, Download, Wallet } from 'lucide-react'
+import { Card, CardDescription, CardTitle } from '../../common/Card'
 import { Button } from '../../common/Button'
 import { StatusBadge } from '../../common/Badge'
+import { EmptyState } from '../../common/EmptyState'
+import { PageHeader, StatCard, StatGrid } from '../../common/PageHeader'
 import { useCapex } from '../../../context/CapexContext'
-import { formatINR, formatDate } from '../../../utils/formatters'
+import { committed, openPr } from '../../../utils/capexRules'
+import { downloadCsv } from '../../../utils/csv'
+import { formatINR } from '../../../utils/formatters'
+import { cn } from '../../../utils/cn'
+
+interface Line {
+  name: string
+  wbs: string
+  budget: number
+  po: number
+  pr: number
+}
+
+const left = (line: Pick<Line, 'budget' | 'po' | 'pr'>) => line.budget - line.po - line.pr
+
+const MoneyBar: React.FC<{ budget: number; po: number; pr: number }> = ({ budget, po, pr }) => {
+  const total = Math.max(budget, po + pr, 1)
+  return (
+    <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-200/80">
+      <div className="h-full bg-blue-600" style={{ width: `${(po / total) * 100}%` }} />
+      <div className="h-full bg-sky-400" style={{ width: `${(pr / total) * 100}%` }} />
+      {po + pr > budget && <div className="h-full bg-rose-500" style={{ width: `${((po + pr - budget) / total) * 100}%` }} />}
+    </div>
+  )
+}
 
 export const BudgetView: React.FC = () => {
-  const { projects, phases, parts, sections, subWorks, selectedProjectId, addToast } = useCapex()
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({
-    'proj-500': true,
-    'proj-001': true,
-    'proj-002': true
-  })
+  const { projects, phases, sections, tasks, subWorks, purchaseRequisitions, selectedProjectId, hasPermission, addToast } =
+    useCapex()
 
-  const toggleProject = (id: string) => {
-    setExpandedProjects(prev => ({ ...prev, [id]: !prev[id] }))
-  }
+  const scope = selectedProjectId === 'all' ? projects : projects.filter(project => project.id === selectedProjectId)
 
-  const relevantProjects = useMemo(() => {
-    return selectedProjectId === 'all'
-      ? projects
-      : projects.filter(p => p.id === selectedProjectId)
-  }, [projects, selectedProjectId])
+  const report = useMemo(
+    () =>
+      scope.map(project => {
+        const projectTasks = tasks.filter(task => task.projectId === project.id)
+        const sectionLines: Line[] = sections
+          .filter(section => section.projectId === project.id)
+          .map(section => {
+            const sectionTasks = projectTasks.filter(task => task.sectionId === section.id)
+            return {
+              name: section.name,
+              wbs: section.wbsNumber,
+              budget: sectionTasks.reduce((sum, task) => sum + task.budgetAmount, 0),
+              po: sectionTasks.reduce((sum, task) => sum + committed(task.id, subWorks), 0),
+              pr: sectionTasks.reduce((sum, task) => sum + openPr(task.id, purchaseRequisitions), 0)
+            }
+          })
+        const allocated = projectTasks.reduce((sum, task) => sum + task.budgetAmount, 0)
+        const po = sectionLines.reduce((sum, line) => sum + line.po, 0)
+        const pr = sectionLines.reduce((sum, line) => sum + line.pr, 0)
+        const phaseTotal = phases.filter(phase => phase.projectId === project.id).reduce((sum, phase) => sum + phase.budgetAmount, 0)
+        return { project, sectionLines, allocated, po, pr, phaseTotal }
+      }),
+    [scope, tasks, sections, phases, subWorks, purchaseRequisitions]
+  )
 
-  // Portfolio Totals
-  const totalApproved = relevantProjects.reduce((s, p) => s + p.approvedAmount, 0)
-  const totalEstimated = relevantProjects.reduce((s, p) => s + p.estimatedCost, 0)
-  const totalPO = relevantProjects.reduce((s, p) => s + p.poValue, 0)
-  const totalBalance = totalApproved - totalPO
-  const totalBudgetVariance = totalEstimated - totalApproved
+  const totals = report.reduce(
+    (sum, row) => ({
+      approved: sum.approved + row.project.approvedAmount,
+      allocated: sum.allocated + row.allocated,
+      po: sum.po + row.po,
+      pr: sum.pr + row.pr
+    }),
+    { approved: 0, allocated: 0, po: 0, pr: 0 }
+  )
 
-  const handleExportFinance = () => {
-    addToast('CAPEX Budget Variance & Reconciliation Sheet exported to CSV.', 'success')
+  const exportCsv = () => {
+    const rows: unknown[][] = []
+    report.forEach(({ project, sectionLines }) =>
+      sectionLines.forEach(line => rows.push([project.code, project.name, line.wbs, line.name, line.budget, line.po, line.pr, left(line)]))
+    )
+    downloadCsv(
+      `capex-budget-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Project code', 'Project', 'Section WBS', 'Section', 'Budget (₹)', 'PO committed (₹)', 'Open PRs (₹)', 'Available (₹)'],
+      rows
+    )
+    addToast(`Exported ${rows.length} section rows.`, 'info')
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200">
-              <Wallet className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-[#0F172A] font-heading tracking-tight">
-                Finance — Capital Budget & Cost Variance Tracking
-              </h2>
-              <p className="text-xs text-[#64748B] mt-0.5">
-                Explicit budget reconciliation adhering to statutory variance formulas with parent-level sub-work PO aggregation.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExportFinance}
-          leftIcon={<Download className="w-3.5 h-3.5 text-[#2563EB]" />}
-        >
-          Export Financial Report
-        </Button>
-      </div>
-
-      {/* Summary KPI Cards - Pure Black Values, No Icons, No Subtitles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1: Approved CAPEX */}
-        <div className="bg-white p-5 rounded-[8px] border border-[#E2E8F0] shadow-xs">
-          <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">
-            Total Approved CAPEX
-          </span>
-          <h3 className="text-2xl font-bold font-mono text-black mt-2 tracking-tight">
-            {formatINR(totalApproved)}
-          </h3>
-        </div>
-
-        {/* KPI 2: Total Estimated Cost */}
-        <div className="bg-white p-5 rounded-[8px] border border-[#E2E8F0] shadow-xs">
-          <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">
-            Total Estimated Cost
-          </span>
-          <h3 className="text-2xl font-bold font-mono text-black mt-2 tracking-tight">
-            {formatINR(totalEstimated)}
-          </h3>
-        </div>
-
-        {/* KPI 3: Committed PO Value */}
-        <div className="bg-white p-5 rounded-[8px] border border-[#E2E8F0] shadow-xs">
-          <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">
-            Committed PO Value
-          </span>
-          <h3 className="text-2xl font-bold font-mono text-black mt-2 tracking-tight">
-            {formatINR(totalPO)}
-          </h3>
-        </div>
-
-        {/* KPI 4: Available Balance */}
-        <div className="bg-white p-5 rounded-[8px] border border-[#E2E8F0] shadow-xs">
-          <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">
-            Available Balance
-          </span>
-          <h3 className="text-2xl font-bold font-mono text-black mt-2 tracking-tight">
-            {formatINR(totalBalance)}
-          </h3>
-        </div>
-      </div>
-
-      {/* Project Financial Breakdown Tables */}
-      <div className="space-y-4">
-        {relevantProjects.map(proj => {
-          const projPhases = phases.filter(ph => ph.projectId === proj.id)
-          const projSubworks = subWorks.filter(sw => sw.projectId === proj.id)
-          const budgetVariance = proj.estimatedCost - proj.approvedAmount
-          const poVariance = proj.poValue - proj.approvedAmount
-          const hasBudgetOverrun = budgetVariance > 0
-          const hasPoOverrun = poVariance > 0
-          const isExpanded = expandedProjects[proj.id] ?? true
-
-          return (
-            <div key={proj.id} className="bg-white rounded-[10px] border border-[#E2E8F0] shadow-xs overflow-hidden">
-              {/* Project Card Header */}
-              <div className="p-4 bg-[#F8FAFC] border-b border-[#E2E8F0] flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => toggleProject(proj.id)}
-                    className="p-1.5 rounded-[6px] hover:bg-slate-200 text-[#475569] transition-colors cursor-pointer"
-                    title={isExpanded ? 'Collapse project details' : 'Expand project details'}
-                  >
-                    {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  </button>
-
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-[4px] border border-blue-200/60">
-                      {proj.code}
-                    </span>
-                    <h3 className="text-sm font-bold text-[#0F172A] font-heading">
-                      {proj.name}
-                    </h3>
-                    <StatusBadge status={proj.status} />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 text-xs text-[#64748B]">
-                  <span>
-                    Timeline: <strong className="text-[#0F172A]">{proj.executionTimeline}</strong> ({formatDate(proj.startDate || proj.approvedDate)} → {formatDate(proj.endDate)})
-                  </span>
-                </div>
-              </div>
-
-              {/* Overrun Warning Banner if applicable */}
-              {(hasBudgetOverrun || hasPoOverrun) && (
-                <div className="px-4 py-2.5 bg-rose-50/80 border-b border-rose-200 text-rose-800 text-xs font-semibold flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>
-                    {hasBudgetOverrun && hasPoOverrun
-                      ? 'CRITICAL WARNING: Estimated Cost and PO Commitment both exceed Approved Budget Ceiling!'
-                      : hasBudgetOverrun
-                      ? `Budget Variance Alert: Estimated Cost exceeds Approved Amount by ${formatINR(budgetVariance)}`
-                      : `Commitment Variance Alert: PO Value exceeds Approved Amount by ${formatINR(poVariance)}`}
-                  </span>
-                </div>
-              )}
-
-              {/* Project Financial Summary Bar with clean aligned cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-y sm:divide-y-0 divide-[#E2E8F0] bg-white text-xs border-b border-[#E2E8F0]">
-                <div className="p-3.5">
-                  <span className="text-[#64748B] text-[11px] font-medium block">Approved Amount</span>
-                  <span className="font-mono font-bold text-[#0F172A] text-sm mt-0.5 block">
-                    {formatINR(proj.approvedAmount)}
-                  </span>
-                </div>
-
-                <div className="p-3.5">
-                  <span className="text-[#64748B] text-[11px] font-medium block">Estimated Cost</span>
-                  <span className="font-mono font-bold text-indigo-700 text-sm mt-0.5 block">
-                    {formatINR(proj.estimatedCost)}
-                  </span>
-                </div>
-
-                <div className="p-3.5">
-                  <span className="text-[#64748B] text-[11px] font-medium block">Total PO Value</span>
-                  <span className="font-mono font-bold text-amber-700 text-sm mt-0.5 block">
-                    {formatINR(proj.poValue)}
-                  </span>
-                </div>
-
-                <div className="p-3.5">
-                  <span className="text-[#64748B] text-[11px] font-medium block">Balance Amount</span>
-                  <span className={`font-mono font-bold text-sm mt-0.5 block ${proj.balanceAmount < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
-                    {formatINR(proj.balanceAmount)}
-                  </span>
-                </div>
-
-                <div className="p-3.5 col-span-2 sm:col-span-1">
-                  <span className="text-[#64748B] text-[11px] font-medium block">Budget Variance</span>
-                  <span className={`font-mono font-bold text-sm mt-0.5 block ${budgetVariance > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
-                    {budgetVariance > 0 ? `+${formatINR(budgetVariance)}` : formatINR(budgetVariance)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Phase & Part Budget Allocation Breakdown */}
-              {isExpanded && projPhases.length > 0 && (
-                <div className="border-b border-[#E2E8F0] p-4 bg-slate-50/40">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="font-semibold text-[#0F172A] text-xs uppercase tracking-wider flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-                      Phase &amp; Part Capital Allocation Breakdown
-                    </span>
-                    <span className="text-[11px] text-[#64748B]">
-                      Overall Approved Budget Ceiling: <strong className="font-mono text-[#0F172A]">{formatINR(proj.approvedAmount)}</strong>
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {projPhases.map(ph => {
-                      const phParts = parts.filter(pt => pt.phaseId === ph.id)
-                      const phPct = Math.round((ph.budgetAmount / proj.approvedAmount) * 100)
-
-                      return (
-                        <div key={ph.id} className="bg-white p-3.5 rounded-[8px] border border-purple-200 shadow-xs">
-                          <div className="flex items-center justify-between pb-2 border-b border-purple-100">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded-sm bg-purple-100 text-purple-800">
-                                {ph.wbsNumber}
-                              </span>
-                              <span className="font-bold text-xs text-[#0F172A]">{ph.name}</span>
-                            </div>
-                            <span className="font-mono font-bold text-xs text-purple-800">
-                              {formatINR(ph.budgetAmount)} <span className="text-[10px] text-[#64748B] font-normal">({phPct}%)</span>
-                            </span>
-                          </div>
-
-                          <div className="mt-2 text-[11px] text-[#64748B]">
-                            CAPEX Approval Date: <strong className="text-[#0F172A]">{formatDate(ph.capexApprovalDate)}</strong>
-                          </div>
-
-                          {phParts.length > 0 && (
-                            <div className="mt-3 space-y-2">
-                              <span className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider block">
-                                Parts Allocation:
-                              </span>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {phParts.map(pt => {
-                                  const ptSections = sections.filter(s => s.partId === pt.id)
-                                  return (
-                                    <div key={pt.id} className="bg-sky-50/50 p-2.5 rounded-[6px] border border-sky-200/80">
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="font-mono text-[10px] font-bold px-1 py-0.2 bg-sky-100 text-sky-800 rounded-xs">
-                                            {pt.wbsNumber}
-                                          </span>
-                                          <span className="font-semibold text-[11px] text-[#0F172A]">{pt.name}</span>
-                                        </div>
-                                        <span className="font-mono font-bold text-[11px] text-sky-800">
-                                          {formatINR(pt.budgetAmount)}
-                                        </span>
-                                      </div>
-
-                                      {ptSections.length > 0 && (
-                                        <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                                          {ptSections.map(s => (
-                                            <span key={s.id} className="text-[10px] bg-white px-1.5 py-0.5 rounded-xs border border-slate-200 text-[#334155]">
-                                              {s.name}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Sub-work Table (Level 5 Breakdown) */}
-              {isExpanded && (
-                <div>
-                  <div className="bg-[#F8FAFC] px-4 py-2.5 border-b border-[#E2E8F0] flex items-center justify-between text-xs">
-                    <span className="font-semibold text-[#475569] uppercase tracking-wider text-[11px]">
-                      Sub-work PO Orders Feeding Project PO Commitment ({projSubworks.length})
-                    </span>
-                    <span className="text-[#64748B] font-mono text-[11px]">
-                      Sub-total: <strong className="text-[#0F172A]">{formatINR(proj.poValue)}</strong>
-                    </span>
-                  </div>
-
-                  {projSubworks.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-[#94A3B8] italic">
-                      No purchase orders recorded for this project yet. Add sub-work items in Planning to track PO commitments.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-white border-b border-[#F1F5F9] text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">
-                            <th className="py-2.5 px-4">WBS / Work Description</th>
-                            <th className="py-2.5 px-3">Supplier Name</th>
-                            <th className="py-2.5 px-3">BP Code</th>
-                            <th className="py-2.5 px-3">PO Number</th>
-                            <th className="py-2.5 px-3 text-right">PO Value + GST</th>
-                            <th className="py-2.5 px-3">Target Date</th>
-                            <th className="py-2.5 px-3">Paid Date</th>
-                            <th className="py-2.5 px-3 text-center">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#F1F5F9]">
-                          {projSubworks.map(sw => (
-                            <tr key={sw.id} className="hover:bg-[#F8FAFC] transition-colors">
-                              <td className="py-2.5 px-4 max-w-xs">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[10px] font-bold text-amber-900 bg-amber-50 px-1 py-0.5 rounded-xs border border-amber-200/60">
-                                    {sw.wbsNumber}
-                                  </span>
-                                  <span className="font-medium text-[#0F172A] truncate">
-                                    {sw.workDescription}
-                                  </span>
-                                </div>
-                              </td>
-
-                              <td className="py-2.5 px-3 text-[#334155]">{sw.supplierName}</td>
-                              <td className="py-2.5 px-3 font-mono text-[#64748B]">{sw.bpCode}</td>
-                              <td className="py-2.5 px-3 font-mono text-blue-600 font-medium">{sw.poNumber}</td>
-                              <td className="py-2.5 px-3 text-right font-mono font-bold text-[#0F172A]">
-                                {formatINR(sw.poValueGst)}
-                              </td>
-                              <td className="py-2.5 px-3 text-[#64748B]">{formatDate(sw.targetDate)}</td>
-                              <td className="py-2.5 px-3 text-[#64748B]">
-                                {sw.paidDate ? (
-                                  <span className="text-emerald-700 font-medium">{formatDate(sw.paidDate)}</span>
-                                ) : (
-                                  <span className="text-slate-400 italic">Unpaid</span>
-                                )}
-                              </td>
-                              <td className="py-2.5 px-3 text-center">
-                                <StatusBadge status={sw.status} className="text-[10px] px-1.5 py-0" />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+      <PageHeader
+        eyebrow="Finance"
+        title="Budget"
+        description="Approved capex against what is allocated to work packages, committed through POs and reserved by open PRs."
+        actions={
+          hasPermission('finance', 'export') &&
+          report.length > 0 && (
+            <Button variant="outline" leftIcon={<Download className="h-4 w-4" />} onClick={exportCsv}>
+              Export CSV
+            </Button>
           )
-        })}
-      </div>
+        }
+        stats={
+          report.length > 0 && (
+            <StatGrid>
+              <StatCard label="Approved capex" value={formatINR(totals.approved, true)} />
+              <StatCard
+                label="Allocated to work packages"
+                value={formatINR(totals.allocated, true)}
+                hint={totals.allocated > totals.approved ? 'More than approved' : `${formatINR(totals.approved - totals.allocated, true)} unallocated`}
+                tone={totals.allocated > totals.approved ? 'danger' : 'default'}
+              />
+              <StatCard label="PO committed" value={formatINR(totals.po, true)} tone="success" />
+              <StatCard
+                label="Available"
+                value={formatINR(totals.allocated - totals.po - totals.pr, true)}
+                hint={`after ${formatINR(totals.pr, true)} of open PRs`}
+              />
+            </StatGrid>
+          )
+        }
+      />
+
+      {report.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={<Wallet className="h-6 w-6" />}
+            title="No budget to show"
+            description="Budgets appear once a project has work packages with budget ceilings."
+          />
+        </Card>
+      ) : (
+        report.map(({ project, sectionLines, allocated, po, pr, phaseTotal }) => {
+          const overAllocated = allocated > project.approvedAmount
+          const phasesOver = phaseTotal > project.approvedAmount
+          return (
+            <Card key={project.id} noPadding>
+              <div className="flex flex-col gap-4 border-b border-slate-200/70 p-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="mono-num rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200">
+                      {project.code}
+                    </span>
+                    <CardTitle>{project.name}</CardTitle>
+                    <StatusBadge status={project.status} />
+                  </div>
+                  <CardDescription>Approved {formatINR(project.approvedAmount)}</CardDescription>
+                </div>
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+                  {[
+                    ['Allocated', allocated],
+                    ['Committed', po],
+                    ['Open PRs', pr],
+                    ['Available', allocated - po - pr]
+                  ].map(([label, value]) => (
+                    <div key={label as string}>
+                      <dt className="text-[11px] text-slate-500">{label}</dt>
+                      <dd className="mono-num font-semibold text-slate-900">{formatINR(value as number, true)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+
+              {(overAllocated || phasesOver) && (
+                <div className="flex items-start gap-2 border-b border-rose-200/70 bg-rose-50/70 px-5 py-3 text-sm text-rose-800">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>
+                    {overAllocated &&
+                      `Work package budgets (${formatINR(allocated)}) exceed the approved ${formatINR(project.approvedAmount)}. `}
+                    {phasesOver && `Phase budgets add up to ${formatINR(phaseTotal)}, more than approved.`}
+                  </p>
+                </div>
+              )}
+
+              {sectionLines.length === 0 ? (
+                <p className="px-5 py-6 text-sm text-slate-500">No sections in this project yet.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Section</th>
+                        <th className="num">Budget</th>
+                        <th className="num">PO committed</th>
+                        <th className="num">Open PRs</th>
+                        <th className="num">Available</th>
+                        <th className="w-48">Used</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sectionLines.map(line => (
+                        <tr key={line.wbs + line.name}>
+                          <td>
+                            <span className="mono-num mr-2 text-xs text-slate-500">{line.wbs}</span>
+                            <span className="font-medium text-slate-800">{line.name}</span>
+                          </td>
+                          <td className="num font-semibold text-slate-900">{formatINR(line.budget)}</td>
+                          <td className="num">{formatINR(line.po)}</td>
+                          <td className="num">{formatINR(line.pr)}</td>
+                          <td className={cn('num font-semibold', left(line) < 0 ? 'text-rose-600' : 'text-emerald-700')}>
+                            {formatINR(left(line))}
+                          </td>
+                          <td>
+                            <MoneyBar budget={line.budget} po={line.po} pr={line.pr} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )
+        })
+      )}
     </div>
   )
 }

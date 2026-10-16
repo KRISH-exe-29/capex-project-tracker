@@ -30,7 +30,7 @@ export const SectionModal: React.FC<SectionModalProps> = ({
   defaultProjectId,
   defaultPartId
 }) => {
-  const { projects, phases, parts, sections, addSection, updateSection } = useCapex()
+  const { projects, parts, sections, addSection, updateSection } = useCapex()
 
   const {
     register,
@@ -104,12 +104,12 @@ export const SectionModal: React.FC<SectionModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={sectionToEdit ? 'Edit Section' : 'Add Section (Level 4)'}
-      subtitle="Sections define engineering domains like Civil, MEP, or Winding under project parts."
+      title={sectionToEdit ? 'Edit section' : 'Add section'}
+      subtitle="Sections group work packages by area, e.g. Civil, MEP, Winding, Testlab."
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <Select
-          label="Parent Project (Level 1)"
+          label="Project"
           {...register('projectId', { required: 'Parent project is required' })}
           options={projects.map(p => ({ value: p.id, label: `${p.code} - ${p.name}` }))}
           error={errors.projectId?.message}
@@ -119,7 +119,7 @@ export const SectionModal: React.FC<SectionModalProps> = ({
 
         {availableParts.length > 0 && (
           <Select
-            label="Parent Part (Level 3)"
+            label="Part (optional)"
             {...register('partId')}
             options={[
               { value: '', label: '-- None (Direct Project Section) --' },
@@ -133,7 +133,7 @@ export const SectionModal: React.FC<SectionModalProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Input
-            label="WBS Identifier (e.g. 1.1)"
+            label="WBS number"
             {...register('wbsNumber', { required: 'WBS Number is required' })}
             error={errors.wbsNumber?.message}
             className="font-mono"
@@ -142,7 +142,7 @@ export const SectionModal: React.FC<SectionModalProps> = ({
 
           <div className="sm:col-span-2">
             <Input
-              label="Section Package Name"
+              label="Section name"
               {...register('name', { required: 'Section name is required' })}
               error={errors.name?.message}
               placeholder="e.g. Civil Foundations & Structural Superstructure"
@@ -158,12 +158,12 @@ export const SectionModal: React.FC<SectionModalProps> = ({
           <textarea
             {...register('description')}
             rows={3}
-            className="w-full px-3 py-2 text-sm bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+            className="w-full px-3 py-2 text-sm bg-white text-[#0F172A] border border-[#CBD5E1] rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
             placeholder="Specific deliverables and technical parameters for this section package..."
           />
         </div>
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-[#F1F5F9]">
+        <div className="flex justify-end gap-3 pt-3 border-t border-slate-200/70">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

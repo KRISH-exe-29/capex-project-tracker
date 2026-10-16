@@ -8,13 +8,17 @@ export type SubWorkStatus = 'PO Issued' | 'In Execution' | 'Billed' | 'Paid' | '
 
 export type DprStatus = 'Submitted' | 'Verified' | 'Approved'
 
-export type DocumentCategory = 
-  | 'Approval Note' 
-  | 'Vendor Contract' 
-  | 'PO Copy' 
-  | 'Technical Drawing' 
-  | 'Invoice' 
+export type DocumentCategory =
+  | 'Approval Note'
+  | 'Vendor Contract'
+  | 'PO Copy'
+  | 'Technical Drawing'
+  | 'Invoice'
   | 'Inspection Report'
+  | 'Capex Proposal'
+  | 'Quote Comparison'
+  | 'Purchase Requisition'
+  | 'GRN'
 
 export interface Project {
   id: string
@@ -94,6 +98,7 @@ export interface Task {
   targetDate: string
   status: TaskStatus
   progress: number // 0 to 100
+  budgetAmount: number
 }
 
 export interface SubWork {
@@ -113,6 +118,64 @@ export interface SubWork {
   poValueGst: number // PO Value + GST (₹)
   paidDate: string // YYYY-MM-DD or empty
   status: SubWorkStatus
+  prId?: string
+  payeeBpCode?: string
+  grnNumber?: string
+  grnDate?: string
+  invoiceNumber?: string
+  invoiceDate?: string
+  quotesCompared?: number
+  lowestQuoteSelected?: boolean
+  selectionJustification?: string
+  cancellationReason?: string
+}
+
+export type PurchaseRequisitionStatus =
+  | 'Pending Approval'
+  | 'Approved'
+  | 'Rejected'
+  | 'Converted to PO'
+  | 'Cancelled'
+export interface PurchaseRequisition {
+  id: string
+  prNumber: string
+  projectId: string
+  taskId: string
+  amount: number
+  purpose: string
+  requestedBy: string
+  requestedAt: string
+  status: PurchaseRequisitionStatus
+  approvedBy?: string
+  approvedAt?: string
+  rejectionReason?: string
+  subWorkId?: string
+}
+export interface BudgetRevision {
+  id: string
+  taskId: string
+  oldBudget: number
+  newBudget: number
+  reason: string
+  requestedBy: string
+  requestedAt: string
+  status: 'Pending' | 'Approved' | 'Rejected'
+  decidedBy?: string
+  decidedAt?: string
+  decisionNote?: string
+}
+export interface AuditEntry {
+  id: string
+  at: string
+  userId: string
+  userName: string
+  action: 'create' | 'update' | 'delete' | 'approve' | 'reject' | 'request' | 'blocked'
+  entityType: string
+  entityId: string
+  entityLabel: string
+  before?: string
+  after?: string
+  reason?: string
 }
 
 export interface TeamMember {
@@ -145,7 +208,7 @@ export interface ProjectDocument {
   name: string
   projectId: string
   wbsRecordId?: string
-  wbsType: 'Project' | 'Section' | 'Milestone' | 'Task' | 'Sub-work'
+  wbsType: 'Project' | 'Section' | 'Milestone' | 'Task' | 'Sub-work' | 'Purchase Requisition'
   category: DocumentCategory
   fileSize: string
   fileType: string
@@ -155,13 +218,7 @@ export interface ProjectDocument {
   url?: string
 }
 
-export type ModuleKey = 
-  | 'dashboard'
-  | 'planning'
-  | 'operation'
-  | 'finance'
-  | 'document'
-  | 'access'
+export type ModuleKey = 'dashboard' | 'planning' | 'operation' | 'finance' | 'document' | 'access'
 
 export interface ActionPermissions {
   view: boolean
@@ -178,7 +235,6 @@ export interface UserPermission {
   userId: string
   userName: string
   userEmail: string
-  password?: string
   role: AppRole | string
   department: string
   avatar: string
@@ -209,13 +265,14 @@ export interface RoleDefinition {
   }
 }
 
-export type ActiveModule = 
+export type ActiveModule =
   | 'dashboard'
   | 'planning-project'
   | 'planning-wbs'
   | 'planning-phase'
   | 'planning-part'
   | 'planning-milestone'
+  | 'planning-section'
   | 'planning-task'
   | 'planning-subwork'
   | 'planning-gantt'
@@ -227,6 +284,10 @@ export type ActiveModule =
   | 'access-matrix'
   | 'access-users'
   | 'access-roles'
+  | 'procurement-pr'
+  | 'procurement-dossier'
+  | 'procurement-exceptions'
+  | 'audit-log'
 
 /**
  * Return default permission set mapped from role
@@ -243,7 +304,14 @@ export function getDefaultPermissionsForRole(role: string): {
 
   if (normalized.includes('admin') && !normalized.includes('capex')) {
     // Full Administrator
-    const full: ActionPermissions = { view: true, create: true, edit: true, delete: true, export: true, approve: true }
+    const full: ActionPermissions = {
+      view: true,
+      create: true,
+      edit: true,
+      delete: true,
+      export: true,
+      approve: true
+    }
     return {
       dashboard: full,
       planning: full,
@@ -258,13 +326,20 @@ export function getDefaultPermissionsForRole(role: string): {
       dashboard: { view: true, create: true, edit: true, delete: true, export: true, approve: true },
       planning: { view: true, create: true, edit: true, delete: true, export: true, approve: true },
       operation: { view: true, create: true, edit: true, delete: false, export: true, approve: true },
-      finance: { view: true, create: true, edit: true, delete: true, export: true, approve: true },
+      finance: { view: true, create: true, edit: true, delete: true, export: true, approve: false },
       document: { view: true, create: true, edit: true, delete: false, export: true, approve: true },
       access: { view: true, create: false, edit: false, delete: false, export: false, approve: false }
     }
   } else {
     // Viewer: Read-only access across all modules
-    const readOnly: ActionPermissions = { view: true, create: false, edit: false, delete: false, export: true, approve: false }
+    const readOnly: ActionPermissions = {
+      view: true,
+      create: false,
+      edit: false,
+      delete: false,
+      export: true,
+      approve: false
+    }
     return {
       dashboard: readOnly,
       planning: readOnly,

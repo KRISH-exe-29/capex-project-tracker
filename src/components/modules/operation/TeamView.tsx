@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react'
-import { Plus, Search, Filter, Edit2, Trash2, Users2, Mail, Phone, Briefcase } from 'lucide-react'
+import { Plus, Edit2, Trash2, Users2, Mail, Phone, Briefcase } from 'lucide-react'
+import { PageHeader } from '../../common/PageHeader'
+import { SearchInput, Toolbar } from '../../common/Toolbar'
 import { Card } from '../../common/Card'
 import { Button } from '../../common/Button'
 import { StatusBadge } from '../../common/Badge'
@@ -10,12 +12,14 @@ import { TeamMember } from '../../../types/capex'
 
 export const TeamView: React.FC = () => {
   const {
-    teamMembers,
     filteredTeam,
     projects,
     deleteTeamMember,
-    selectedProjectId
+    hasPermission
   } = useCapex()
+  const canCreate = hasPermission('operation', 'create')
+  const canEdit = hasPermission('operation', 'edit')
+  const canDelete = hasPermission('operation', 'delete')
 
   const [searchTerm, setSearchTerm] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -46,50 +50,40 @@ export const TeamView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Users2 className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-xl font-bold text-[#0F172A] font-heading tracking-tight">
-              Project Team & Resource Allocation
-            </h2>
-          </div>
-          <p className="text-xs text-[#64748B] mt-0.5">
-            Associate key engineering personnel, consultants, and project directors with relevant CAPEX projects and work items.
-          </p>
-        </div>
+      <PageHeader
+        eyebrow="Operation"
+        title="Team"
+        description="Engineers, consultants and leads assigned to each project and the work packages they supervise."
+        actions={
+          canCreate &&
+          projects.length > 0 && (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={handleCreate}>
+              Add team member
+            </Button>
+          )
+        }
+      />
 
-        <Button
-          variant="primary"
-          onClick={handleCreate}
-          leftIcon={<Plus className="w-4 h-4" />}
-        >
-          Associate Member
-        </Button>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <Card noPadding className="p-4">
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 text-[#94A3B8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="Search by engineer name, role, email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full h-10 pl-9 pr-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
-          />
-        </div>
+      <Card noPadding>
+        <Toolbar>
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search name, role or email…" />
+        </Toolbar>
       </Card>
 
       {/* Team Cards Grid */}
       {displayedTeam.length === 0 ? (
-        <Card noPadding>
+        <Card>
           <EmptyState
-            title="No Team Members Found"
-            description="No personnel are associated with this project. Click Associate Member to assign staff."
-            actionLabel="Associate Member"
+            icon={<Users2 className="h-6 w-6" />}
+            title={filteredTeam.length ? 'No team members match' : 'No team members yet'}
+            description={
+              filteredTeam.length
+                ? 'Change the search.'
+                : projects.length
+                  ? 'Add the engineers and consultants working on each project.'
+                  : 'Create a project first.'
+            }
+            actionLabel={!filteredTeam.length && projects.length && canCreate ? 'Add team member' : undefined}
             onAction={handleCreate}
           />
         </Card>
@@ -125,7 +119,7 @@ export const TeamView: React.FC = () => {
                     <StatusBadge status={member.status} />
                   </div>
 
-                  <div className="space-y-2 text-xs text-[#64748B] pt-2 border-t border-[#F1F5F9]">
+                  <div className="space-y-2 text-xs text-[#64748B] pt-2 border-t border-slate-200/70">
                     <div className="flex items-center gap-2 truncate">
                       <Briefcase className="w-3.5 h-3.5 text-[#94A3B8] shrink-0" />
                       <span className="truncate text-[#0F172A] font-medium">
@@ -145,7 +139,7 @@ export const TeamView: React.FC = () => {
                   </div>
 
                   {member.workItems.length > 0 && (
-                    <div className="mt-3 pt-2.5 border-t border-[#F1F5F9]">
+                    <div className="mt-3 pt-2.5 border-t border-slate-200/70">
                       <p className="text-[10px] uppercase font-bold text-[#94A3B8] tracking-wider mb-1.5">
                         Supervised WBS Packages
                       </p>
@@ -153,7 +147,7 @@ export const TeamView: React.FC = () => {
                         {member.workItems.map((item, idx) => (
                           <span
                             key={idx}
-                            className="text-[10px] font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded-[4px] border border-slate-200"
+                            className="text-[10px] font-mono bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200"
                           >
                             {item}
                           </span>
@@ -163,8 +157,9 @@ export const TeamView: React.FC = () => {
                   )}
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-[#F1F5F9]">
-                  <Button
+                {(canEdit || canDelete) && (
+                <div className="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-slate-200/70">
+                  {canEdit && <Button
                     variant="ghost"
                     size="sm"
                     className="h-8 text-xs text-[#64748B]"
@@ -172,8 +167,8 @@ export const TeamView: React.FC = () => {
                     onClick={() => handleEdit(member)}
                   >
                     Edit
-                  </Button>
-                  <Button
+                  </Button>}
+                  {canDelete && <Button
                     variant="ghost"
                     size="sm"
                     className="h-8 text-xs text-rose-600 hover:bg-rose-50"
@@ -181,8 +176,9 @@ export const TeamView: React.FC = () => {
                     onClick={() => deleteTeamMember(member.id)}
                   >
                     Remove
-                  </Button>
+                  </Button>}
                 </div>
+                )}
               </Card>
             )
           })}

@@ -196,7 +196,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
         </div>
 
         {/* Financial Policy Note */}
-        <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-[6px] text-xs text-blue-900 leading-relaxed">
+        <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-lg text-xs text-blue-900 leading-relaxed">
           <span className="font-semibold">Financial Calculation Rule:</span> Balance Amount is calculated as{' '}
           <code className="font-mono bg-white px-1.5 py-0.5 rounded-sm border border-blue-200">
             Approved Amount − Total PO Value
@@ -255,12 +255,12 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
             {...register('description')}
             rows={3}
             placeholder="Detailed technical overview, engineering deliverables, and physical boundary..."
-            className="w-full px-3 py-2 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+            className="w-full px-3 py-2 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
           />
         </div>
 
         {/* Form Actions */}
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#F1F5F9]">
+        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200/70">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

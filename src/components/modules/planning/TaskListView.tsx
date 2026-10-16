@@ -1,211 +1,219 @@
-import React, { useState, useMemo } from 'react'
-import { Plus, Search, Filter, Edit2, Trash2, CheckSquare } from 'lucide-react'
+import React, { useMemo, useState } from 'react'
+import { CheckSquare, ClipboardList, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Card } from '../../common/Card'
 import { Button } from '../../common/Button'
 import { StatusBadge } from '../../common/Badge'
 import { EmptyState } from '../../common/EmptyState'
+import { PageHeader, StatCard, StatGrid } from '../../common/PageHeader'
+import { FilterSelect, SearchInput, Toolbar } from '../../common/Toolbar'
+import { IconButton } from '../../common/IconButton'
+import { ConfirmDialog } from '../../common/ConfirmDialog'
 import { TaskModal } from './TaskModal'
+import { RaisePrModal } from '../procurement/RaisePrModal'
 import { useCapex } from '../../../context/CapexContext'
-import { Task } from '../../../types/capex'
-import { formatDate } from '../../../utils/formatters'
+import type { Task } from '../../../types/capex'
+import { committed, openPr } from '../../../utils/capexRules'
+import { formatDate, formatINR } from '../../../utils/formatters'
+import { cn } from '../../../utils/cn'
+
+const STATUSES = ['ALL', 'Pending', 'In Progress', 'Completed', 'Blocked']
 
 export const TaskListView: React.FC = () => {
   const {
-    tasks,
-    milestones,
-    sections,
     projects,
+    sections,
     filteredTasks,
+    subWorks,
+    purchaseRequisitions,
     deleteTask,
-    selectedProjectId
+    hasPermission,
+    hasFinancialRecords,
+    focusRecordId
   } = useCapex()
 
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null)
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('ALL')
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<Task | null>(null)
+  const [deleting, setDeleting] = useState<Task | null>(null)
+  const [prTaskId, setPrTaskId] = useState<string | null>(null)
 
-  const displayedTasks = useMemo(() => {
-    return filteredTasks.filter(t => {
-      const proj = projects.find(p => p.id === t.projectId)
-      const sec = sections.find(s => s.id === t.sectionId)
-      const ms = milestones.find(m => m.id === t.milestoneId)
+  const canCreate = hasPermission('planning', 'create')
+  const canEdit = hasPermission('planning', 'edit')
+  const canDelete = hasPermission('planning', 'delete')
 
-      const matchesSearch =
-        t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        t.wbsNumber.includes(searchTerm) ||
-        (proj && proj.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (ms && ms.name.toLowerCase().includes(searchTerm.toLowerCase()))
+  const ledger = useMemo(
+    () =>
+      filteredTasks.map(task => {
+        const po = committed(task.id, subWorks)
+        const pr = openPr(task.id, purchaseRequisitions)
+        return { task, po, pr, left: task.budgetAmount - po - pr }
+      }),
+    [filteredTasks, subWorks, purchaseRequisitions]
+  )
 
-      const matchesStatus = statusFilter === 'ALL' || t.status === statusFilter
-      return matchesSearch && matchesStatus
-    })
-  }, [filteredTasks, searchTerm, statusFilter, projects, sections, milestones])
+  const rows = ledger.filter(({ task }) => {
+    if (status !== 'ALL' && task.status !== status) return false
+    const needle = search.trim().toLowerCase()
+    if (!needle) return true
+    const section = sections.find(item => item.id === task.sectionId)
+    return `${task.wbsNumber} ${task.name} ${section?.name ?? ''}`.toLowerCase().includes(needle)
+  })
 
-  const handleEdit = (task: Task) => {
-    setTaskToEdit(task)
-    setIsModalOpen(true)
-  }
+  const totals = ledger.reduce(
+    (sum, row) => ({ budget: sum.budget + row.task.budgetAmount, po: sum.po + row.po, pr: sum.pr + row.pr }),
+    { budget: 0, po: 0, pr: 0 }
+  )
+  const overCount = ledger.filter(row => row.left < 0).length
 
-  const handleCreate = () => {
-    setTaskToEdit(null)
-    setIsModalOpen(true)
+  const openCreate = () => {
+    setEditing(null)
+    setModalOpen(true)
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <CheckSquare className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-xl font-bold text-[#0F172A] font-heading tracking-tight">
-              Work Package Management
-            </h2>
-          </div>
-          <p className="text-xs text-[#64748B] mt-0.5">
-            Detailed work execution packages mapped to parent projects, sections, and milestones.
-          </p>
-        </div>
+      <PageHeader
+        eyebrow="Planning"
+        title="Work Packages"
+        description="Each work package is a budget line with a hard ceiling. Available = budget − PO committed − open PRs."
+        actions={
+          canCreate && (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+              New work package
+            </Button>
+          )
+        }
+        stats={
+          ledger.length > 0 && (
+            <StatGrid>
+              <StatCard label="Total budget" value={formatINR(totals.budget, true)} hint={`${ledger.length} work packages`} />
+              <StatCard label="PO committed" value={formatINR(totals.po, true)} tone="success" />
+              <StatCard label="Open PRs" value={formatINR(totals.pr, true)} tone="warning" />
+              <StatCard
+                label="Available"
+                value={formatINR(totals.budget - totals.po - totals.pr, true)}
+                hint={overCount ? `${overCount} over budget` : 'No line over budget'}
+                tone={overCount ? 'danger' : 'default'}
+              />
+            </StatGrid>
+          )
+        }
+      />
 
-        <Button
-          variant="primary"
-          onClick={handleCreate}
-          leftIcon={<Plus className="w-4 h-4" />}
-        >
-          Add Work Package
-        </Button>
-      </div>
+      <Card noPadding>
+        <Toolbar>
+          <SearchInput value={search} onChange={setSearch} placeholder="Search WBS number, name or section…" />
+          <FilterSelect
+            label="Status"
+            value={status}
+            onChange={setStatus}
+            options={STATUSES.map(item => ({ value: item, label: item === 'ALL' ? 'All' : item }))}
+          />
+        </Toolbar>
 
-      {/* Filter and Search Bar */}
-      <Card noPadding className="p-4">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 text-[#94A3B8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search by work package, project..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-10 pl-9 pr-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+        {rows.length === 0 ? (
+          <div className="p-5">
+            <EmptyState
+              icon={<CheckSquare className="h-6 w-6" />}
+              title={ledger.length ? 'No work packages match' : 'No work packages yet'}
+              description={
+                ledger.length
+                  ? 'Change the search or status filter.'
+                  : sections.length
+                    ? 'Add a work package under a section and give it a budget. PRs are raised against it.'
+                    : 'Create a project and a section first (Planning → Project WBS).'
+              }
+              actionLabel={!ledger.length && sections.length && canCreate ? 'New work package' : undefined}
+              onAction={openCreate}
             />
           </div>
-
-          <div className="flex items-center gap-2.5 w-full md:w-auto">
-            <Filter className="w-3.5 h-3.5 text-[#64748B]" />
-            <span className="text-xs text-[#64748B] font-medium">Status:</span>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-10 px-3 text-xs bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 cursor-pointer"
-            >
-              <option value="ALL">All Work Packages ({filteredTasks.length})</option>
-              <option value="Pending">Pending</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Completed">Completed</option>
-              <option value="Blocked">Blocked</option>
-            </select>
-          </div>
-        </div>
-      </Card>
-
-      {/* Table */}
-      <Card noPadding className="overflow-hidden">
-        {displayedTasks.length === 0 ? (
-          <EmptyState
-            title="No Work Packages Found"
-            description="No work packages match your current filters. Add a new work package to assign engineering scopes."
-            actionLabel="Add Work Package"
-            onAction={handleCreate}
-          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="table-wrap">
+            <table className="data-table">
               <thead>
-                <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-semibold text-[#475569] uppercase tracking-wider sticky top-0 z-10">
-                  <th className="py-3 px-4">WBS / Work Package Name</th>
-                  <th className="py-3 px-3">Project</th>
-                  <th className="py-3 px-3">Section</th>
-                  <th className="py-3 px-3">Start Date</th>
-                  <th className="py-3 px-3">Target Date</th>
-                  <th className="py-3 px-3">Progress</th>
-                  <th className="py-3 px-3 text-center">Status</th>
-                  <th className="py-3 px-4 text-center">Actions</th>
+                <tr>
+                  <th>Work package</th>
+                  <th>Section</th>
+                  <th className="num">Budget</th>
+                  <th className="num">PO committed</th>
+                  <th className="num">Open PRs</th>
+                  <th className="num">Available</th>
+                  <th>Status</th>
+                  <th className="actions">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#F1F5F9] text-xs text-[#0F172A]">
-                {displayedTasks.map((tsk) => {
-                  const proj = projects.find(p => p.id === tsk.projectId)
-                  const ms = milestones.find(m => m.id === tsk.milestoneId)
-
+              <tbody>
+                {rows.map(({ task, po, pr, left }) => {
+                  const project = projects.find(item => item.id === task.projectId)
+                  const section = sections.find(item => item.id === task.sectionId)
+                  const used = task.budgetAmount > 0 ? Math.min(100, ((po + pr) / task.budgetAmount) * 100) : 0
                   return (
-                    <tr key={tsk.id} className="hover:bg-[#F8FAFC]/80 transition-colors">
-                      <td className="py-3.5 px-4 max-w-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[11px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-sm shrink-0 border border-emerald-200/60">
-                            {tsk.wbsNumber}
+                    <tr key={task.id} className={cn(focusRecordId === task.id && 'bg-blue-50/70')}>
+                      <td className="max-w-[280px]">
+                        <div className="flex items-start gap-2">
+                          <span className="mono-num shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-200">
+                            {task.wbsNumber}
                           </span>
-                          <span className="font-semibold text-[#0F172A] leading-snug">
-                            {tsk.name}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="py-3.5 px-3">
-                        <span className="text-[#334155] font-medium block truncate max-w-[150px]">
-                          {proj ? proj.name : '—'}
-                        </span>
-                        <span className="text-[10px] font-mono text-[#64748B]">
-                          {proj ? proj.code : ''}
-                        </span>
-                      </td>
-
-                      <td className="py-3.5 px-3 text-[#64748B] max-w-[150px] truncate">
-                        {ms ? ms.name : '—'}
-                      </td>
-
-                      <td className="py-3.5 px-3 text-[#334155] whitespace-nowrap">
-                        {formatDate(tsk.startDate)}
-                      </td>
-
-                      <td className="py-3.5 px-3 text-[#334155] whitespace-nowrap">
-                        {formatDate(tsk.targetDate)}
-                      </td>
-
-                      <td className="py-3.5 px-3 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 bg-[#E2E8F0] rounded-full h-1.5 overflow-hidden">
-                            <div
-                              className="bg-emerald-600 h-1.5 rounded-full"
-                              style={{ width: `${tsk.progress}%` }}
-                            />
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-900">{task.name}</p>
+                            <p className="truncate text-xs text-slate-500">{project?.code}</p>
                           </div>
-                          <span className="font-mono text-[11px] text-[#475569]">
-                            {tsk.progress}%
-                          </span>
                         </div>
                       </td>
-
-                      <td className="py-3.5 px-3 text-center whitespace-nowrap">
-                        <StatusBadge status={tsk.status} />
+                      <td className="max-w-[160px] truncate">{section?.name ?? '—'}</td>
+                      <td className="num font-semibold text-slate-900">{formatINR(task.budgetAmount)}</td>
+                      <td className="num">{formatINR(po)}</td>
+                      <td className="num">{formatINR(pr)}</td>
+                      <td className="num">
+                        <span className={cn('font-semibold', left < 0 ? 'text-rose-600' : 'text-emerald-700')}>
+                          {formatINR(left)}
+                        </span>
+                        <div className="mt-1 ml-auto h-1 w-24 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className={cn('h-full rounded-full', left < 0 ? 'bg-rose-500' : 'bg-blue-600')}
+                            style={{ width: `${used}%` }}
+                          />
+                        </div>
                       </td>
-
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={() => handleEdit(tsk)}
-                            className="p-1.5 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-[4px] cursor-pointer"
-                            title="Edit Work Package"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => deleteTask(tsk.id)}
-                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-[4px] cursor-pointer"
-                            title="Delete Work Package"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                      <td>
+                        <StatusBadge status={task.status} />
+                        <div className="mono-num mt-1 text-[11px] text-slate-500">
+                          {task.progress ?? 0}% · due {formatDate(task.targetDate)}
+                        </div>
+                      </td>
+                      <td className="actions">
+                        <div className="flex justify-end gap-1">
+                          {canCreate && (
+                            <IconButton label="Raise PR" onClick={() => setPrTaskId(task.id)}>
+                              <ClipboardList className="h-4 w-4" />
+                            </IconButton>
+                          )}
+                          {canEdit && (
+                            <IconButton
+                              label="Edit work package"
+                              onClick={() => {
+                                setEditing(task)
+                                setModalOpen(true)
+                              }}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </IconButton>
+                          )}
+                          {canDelete && (
+                            <IconButton
+                              label="Delete work package"
+                              tone="danger"
+                              disabledReason={
+                                hasFinancialRecords(item => item.id === task.id)
+                                  ? 'Has PRs or POs, so it cannot be deleted'
+                                  : undefined
+                              }
+                              onClick={() => setDeleting(task)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </IconButton>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -217,11 +225,15 @@ export const TaskListView: React.FC = () => {
         )}
       </Card>
 
-      {/* Modal */}
-      <TaskModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        taskToEdit={taskToEdit}
+      <TaskModal isOpen={modalOpen} onClose={() => setModalOpen(false)} taskToEdit={editing} />
+      <RaisePrModal isOpen={prTaskId !== null} onClose={() => setPrTaskId(null)} defaultTaskId={prTaskId ?? undefined} />
+      <ConfirmDialog
+        isOpen={deleting !== null}
+        title={`Delete ${deleting?.wbsNumber ?? ''} ${deleting?.name ?? ''}?`}
+        message="The work package and its budget line are removed. This is recorded in the Activity Log."
+        confirmLabel="Delete work package"
+        onConfirm={() => deleting && deleteTask(deleting.id)}
+        onClose={() => setDeleting(null)}
       />
     </div>
   )

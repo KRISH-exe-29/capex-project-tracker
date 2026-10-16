@@ -115,12 +115,12 @@ export const PhaseModal: React.FC<PhaseModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={phaseToEdit ? 'Edit Project Phase' : 'Add Project Phase (Level 2)'}
+      title={phaseToEdit ? 'Edit phase' : 'Add phase'}
       subtitle="Define capital execution phases and split approved budget ceilings (e.g. Phase I: 135 Cr, Phase II: 365 Cr)."
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <Select
-          label="Parent Project (Level 1)"
+          label="Project"
           {...register('projectId', { required: 'Parent project is required' })}
           options={projects.map(p => ({ value: p.id, label: `${p.code} - ${p.name}` }))}
           error={errors.projectId?.message}
@@ -199,7 +199,7 @@ export const PhaseModal: React.FC<PhaseModalProps> = ({
             {...register('description')}
             rows={3}
             placeholder="Key equipment scope, facility components, or statutory conditions..."
-            className="w-full text-xs p-3 bg-white text-[#0F172A] border border-[#CBD5E1] rounded-[6px] focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
+            className="w-full text-xs p-3 bg-white text-[#0F172A] border border-[#CBD5E1] rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#2563EB]/25 focus:border-[#2563EB]"
           />
         </div>
 

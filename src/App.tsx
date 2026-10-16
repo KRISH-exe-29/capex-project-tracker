@@ -6,6 +6,7 @@ import { AppLayout } from './components/layout/AppLayout'
 import { DashboardView } from './components/modules/dashboard/DashboardView'
 import { ProjectListView } from './components/modules/planning/ProjectListView'
 import { WbsTreeView } from './components/modules/planning/WbsTreeView'
+import { SectionListView } from './components/modules/planning/SectionListView'
 import { MilestoneListView } from './components/modules/planning/MilestoneListView'
 import { TaskListView } from './components/modules/planning/TaskListView'
 import { SubWorkListView } from './components/modules/planning/SubWorkListView'
@@ -17,9 +18,13 @@ import { BillingView } from './components/modules/finance/BillingView'
 import { DocumentView } from './components/modules/document/DocumentView'
 import { UserMatrixView } from './components/modules/access/UserMatrixView'
 import { UsersView } from './components/modules/access/UsersView'
+import { ProcurementView } from './components/modules/procurement/ProcurementView'
+import { DossierView } from './components/modules/procurement/DossierView'
+import { ExceptionsView } from './components/modules/procurement/ExceptionsView'
+import { AuditLogView } from './components/modules/access/AuditLogView'
 
 const AppContent: React.FC = () => {
-  const { activeModule } = useCapex()
+  const { activeModule, focusRecordId } = useCapex()
 
   const renderModuleView = () => {
     switch (activeModule) {
@@ -31,6 +36,9 @@ const AppContent: React.FC = () => {
 
       case 'planning-wbs':
         return <WbsTreeView />
+
+      case 'planning-section':
+        return <SectionListView />
 
       case 'planning-milestone':
         return <MilestoneListView />
@@ -58,6 +66,14 @@ const AppContent: React.FC = () => {
 
       case 'document':
         return <DocumentView />
+      case 'procurement-pr':
+        return <ProcurementView />
+      case 'procurement-dossier':
+        return <DossierView />
+      case 'procurement-exceptions':
+        return <ExceptionsView />
+      case 'audit-log':
+        return <AuditLogView />
 
       case 'access-matrix':
         return <UserMatrixView />
@@ -73,7 +89,7 @@ const AppContent: React.FC = () => {
 
   return (
     <AppLayout>
-      {renderModuleView()}
+      <React.Fragment key={`${activeModule}:${focusRecordId}`}>{renderModuleView()}</React.Fragment>
     </AppLayout>
   )
 }

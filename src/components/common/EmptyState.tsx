@@ -18,7 +18,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   onAction
 }) => {
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-4 text-center rounded-[8px] border border-dashed border-[#CBD5E1] bg-[#F8FAFC]/50">
+    <div className="flex flex-col items-center justify-center py-12 px-4 text-center rounded-xl border border-dashed border-slate-300 bg-white/50">
       <div className="w-12 h-12 rounded-full bg-blue-50 text-[#2563EB] flex items-center justify-center mb-3 shadow-xs">
         {icon || <FolderX className="w-6 h-6" />}
       </div>

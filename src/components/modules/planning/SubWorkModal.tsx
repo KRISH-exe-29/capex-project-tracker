@@ -1,56 +1,89 @@
 import React, { useEffect, useMemo } from 'react'
 import { useForm } from 'react-hook-form'
+import { AlertCircle } from 'lucide-react'
 import { Modal } from '../../common/Modal'
 import { Input } from '../../common/Input'
 import { Select } from '../../common/Select'
 import { Button } from '../../common/Button'
-import { SubWork, SubWorkStatus } from '../../../types/capex'
+import type { SubWork, SubWorkStatus } from '../../../types/capex'
 import { useCapex } from '../../../context/CapexContext'
+import { committed, isSettled, openPr } from '../../../utils/capexRules'
+import { formatINR } from '../../../utils/formatters'
+import { BudgetGauge } from '../procurement/BudgetGauge'
 
 interface SubWorkModalProps {
   isOpen: boolean
   onClose: () => void
   subWorkToEdit?: SubWork | null
-  defaultProjectId?: string
-  defaultSectionId?: string
-  defaultMilestoneId?: string
+  /** Pre-select this approved PR when creating a PO. */
+  defaultPrId?: string
+  /** Limit the PR list to one work package (e.g. opened from the WBS tree). */
   defaultTaskId?: string
 }
 
-interface SubWorkFormData {
-  projectId: string
-  sectionId: string
-  milestoneId: string
-  taskId: string
-  wbsNumber: string
+interface PoFormData {
+  prId: string
+  poNumber: string
   workDescription: string
   supplierName: string
   bpCode: string
-  targetDate: string
-  poNumber: string
+  payeeBpCode: string
   poValueGst: number
-  paidDate: string
+  targetDate: string
   status: SubWorkStatus
+  quotesCompared: number
+  lowestQuoteSelected: 'yes' | 'no'
+  selectionJustification: string
+  grnNumber: string
+  grnDate: string
+  invoiceNumber: string
+  invoiceDate: string
+  paidDate: string
 }
+
+const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
+
+const EMPTY: PoFormData = {
+  prId: '',
+  poNumber: '',
+  workDescription: '',
+  supplierName: '',
+  bpCode: '',
+  payeeBpCode: '',
+  poValueGst: 0,
+  targetDate: inDays(30),
+  status: 'PO Issued',
+  quotesCompared: 3,
+  lowestQuoteSelected: 'yes',
+  selectionJustification: '',
+  grnNumber: '',
+  grnDate: '',
+  invoiceNumber: '',
+  invoiceDate: '',
+  paidDate: ''
+}
+
+const STATUS_OPTIONS: { value: SubWorkStatus; label: string }[] = [
+  { value: 'PO Issued', label: 'PO issued' },
+  { value: 'In Execution', label: 'In execution' },
+  { value: 'Billed', label: 'Billed' },
+  { value: 'Paid', label: 'Paid' }
+]
+
+const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{children}</h4>
+)
 
 export const SubWorkModal: React.FC<SubWorkModalProps> = ({
   isOpen,
   onClose,
   subWorkToEdit,
-  defaultProjectId,
-  defaultSectionId,
-  defaultMilestoneId,
+  defaultPrId,
   defaultTaskId
 }) => {
-  const {
-    projects,
-    sections,
-    milestones,
-    tasks,
-    subWorks,
-    addSubWork,
-    updateSubWork
-  } = useCapex()
+  const { tasks, subWorks, purchaseRequisitions, addSubWork, updateSubWork, selectedProjectId } = useCapex()
+  const editing = Boolean(subWorkToEdit)
+  const valueLocked = Boolean(subWorkToEdit && isSettled(subWorkToEdit))
 
   const {
     register,
@@ -58,304 +91,331 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
     reset,
     watch,
     setValue,
-    formState: { errors, isSubmitting }
-  } = useForm<SubWorkFormData>({
-    defaultValues: {
-      projectId: defaultProjectId || projects[0]?.id || '',
-      sectionId: defaultSectionId || '',
-      milestoneId: defaultMilestoneId || '',
-      taskId: defaultTaskId || '',
-      wbsNumber: '1.1.1.1.1',
-      workDescription: '',
-      supplierName: '',
-      bpCode: '',
-      targetDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      poNumber: `PO-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      poValueGst: 1000000,
-      paidDate: '',
-      status: 'In Execution'
-    }
-  })
+    formState: { errors }
+  } = useForm<PoFormData>({ defaultValues: EMPTY })
 
-  const watchProjectId = watch('projectId')
-  const watchSectionId = watch('sectionId')
-  const watchMilestoneId = watch('milestoneId')
-  const watchTaskId = watch('taskId')
+  const approvedPrs = useMemo(
+    () =>
+      purchaseRequisitions.filter(
+        pr =>
+          pr.status === 'Approved' &&
+          (!defaultTaskId || pr.taskId === defaultTaskId) &&
+          (selectedProjectId === 'all' || pr.projectId === selectedProjectId)
+      ),
+    [purchaseRequisitions, defaultTaskId, selectedProjectId]
+  )
 
-  // Filter sections by project
-  const availableSections = useMemo(() => {
-    return sections.filter(s => s.projectId === watchProjectId)
-  }, [sections, watchProjectId])
+  const prId = watch('prId')
+  const value = Number(watch('poValueGst')) || 0
+  const lowest = watch('lowestQuoteSelected')
+  const quotes = Number(watch('quotesCompared')) || 0
 
-  // Filter milestones by section
-  const availableMilestones = useMemo(() => {
-    return milestones.filter(m => m.sectionId === watchSectionId)
-  }, [milestones, watchSectionId])
+  const pr = purchaseRequisitions.find(item => item.id === (editing ? subWorkToEdit?.prId : prId))
+  const task = tasks.find(item => item.id === (editing ? subWorkToEdit?.taskId : pr?.taskId))
 
-  // Filter tasks by milestone
-  const availableTasks = useMemo(() => {
-    return tasks.filter(t => t.milestoneId === watchMilestoneId)
-  }, [tasks, watchMilestoneId])
-
-  // Sync cascading dropdowns
-  useEffect(() => {
-    if (availableSections.length > 0 && !availableSections.some(s => s.id === watchSectionId)) {
-      setValue('sectionId', availableSections[0].id)
-    }
-  }, [watchProjectId, availableSections, watchSectionId, setValue])
+  // Ceiling for this PO: excludes this PR's own reservation (it converts into the PO) and, when
+  // editing, this PO's current value.
+  const committedOthers = task
+    ? committed(task.id, subWorks.filter(po => po.id !== subWorkToEdit?.id))
+    : 0
+  const openOthers = task ? openPr(task.id, purchaseRequisitions, pr?.id) : 0
+  const headroom = task ? task.budgetAmount - committedOthers - openOthers : 0
+  const limit = editing ? headroom : Math.min(pr?.amount ?? 0, headroom)
+  const overLimit = !valueLocked && value > limit
 
   useEffect(() => {
-    if (availableMilestones.length > 0 && !availableMilestones.some(m => m.id === watchMilestoneId)) {
-      setValue('milestoneId', availableMilestones[0].id)
-    }
-  }, [watchSectionId, availableMilestones, watchMilestoneId, setValue])
-
-  useEffect(() => {
-    if (availableTasks.length > 0 && !availableTasks.some(t => t.id === watchTaskId)) {
-      setValue('taskId', availableTasks[0].id)
-    }
-  }, [watchMilestoneId, availableTasks, watchTaskId, setValue])
-
-  // Auto-generate WBS number when task changes
-  useEffect(() => {
-    if (!subWorkToEdit && watchTaskId) {
-      const parentTask = tasks.find(t => t.id === watchTaskId)
-      if (parentTask) {
-        const existingSubworks = subWorks.filter(sw => sw.taskId === watchTaskId)
-        const nextNum = existingSubworks.length + 1
-        setValue('wbsNumber', `${parentTask.wbsNumber}.${nextNum}`)
-      }
-    }
-  }, [watchTaskId, tasks, subWorks, subWorkToEdit, setValue])
-
-  useEffect(() => {
+    if (!isOpen) return
     if (subWorkToEdit) {
       reset({
-        projectId: subWorkToEdit.projectId,
-        sectionId: subWorkToEdit.sectionId,
-        milestoneId: subWorkToEdit.milestoneId,
-        taskId: subWorkToEdit.taskId,
-        wbsNumber: subWorkToEdit.wbsNumber,
+        ...EMPTY,
+        prId: subWorkToEdit.prId ?? '',
+        poNumber: subWorkToEdit.poNumber,
         workDescription: subWorkToEdit.workDescription,
         supplierName: subWorkToEdit.supplierName,
         bpCode: subWorkToEdit.bpCode,
-        targetDate: subWorkToEdit.targetDate,
-        poNumber: subWorkToEdit.poNumber,
+        payeeBpCode: subWorkToEdit.payeeBpCode ?? subWorkToEdit.bpCode,
         poValueGst: subWorkToEdit.poValueGst,
-        paidDate: subWorkToEdit.paidDate || '',
-        status: subWorkToEdit.status
+        targetDate: subWorkToEdit.targetDate,
+        status: subWorkToEdit.status,
+        quotesCompared: subWorkToEdit.quotesCompared ?? 0,
+        lowestQuoteSelected: subWorkToEdit.lowestQuoteSelected === false ? 'no' : 'yes',
+        selectionJustification: subWorkToEdit.selectionJustification ?? '',
+        grnNumber: subWorkToEdit.grnNumber ?? '',
+        grnDate: subWorkToEdit.grnDate ?? '',
+        invoiceNumber: subWorkToEdit.invoiceNumber ?? '',
+        invoiceDate: subWorkToEdit.invoiceDate ?? '',
+        paidDate: subWorkToEdit.paidDate ?? ''
       })
     } else {
-      const pId = defaultProjectId || projects[0]?.id || ''
-      const secList = sections.filter(s => s.projectId === pId)
-      const sId = defaultSectionId || (secList[0]?.id || '')
-      const msList = milestones.filter(m => m.sectionId === sId)
-      const mId = defaultMilestoneId || (msList[0]?.id || '')
-      const tskList = tasks.filter(t => t.milestoneId === mId)
-      const tId = defaultTaskId || (tskList[0]?.id || '')
-
+      const first = approvedPrs.find(item => item.id === defaultPrId) ?? approvedPrs[0]
       reset({
-        projectId: pId,
-        sectionId: sId,
-        milestoneId: mId,
-        taskId: tId,
-        wbsNumber: '1.1.1.1.1',
-        workDescription: '',
-        supplierName: '',
-        bpCode: `BP-${Math.floor(10000 + Math.random() * 90000)}`,
-        targetDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        poNumber: `PO-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-        poValueGst: 1000000,
-        paidDate: '',
-        status: 'In Execution'
+        ...EMPTY,
+        prId: first?.id ?? '',
+        workDescription: first?.purpose ?? '',
+        poValueGst: first?.amount ?? 0
       })
     }
-  }, [
-    subWorkToEdit,
-    defaultProjectId,
-    defaultSectionId,
-    defaultMilestoneId,
-    defaultTaskId,
-    projects,
-    sections,
-    milestones,
-    tasks,
-    reset,
-    isOpen
-  ])
+  }, [isOpen, subWorkToEdit, defaultPrId, approvedPrs, reset])
 
-  const onSubmit = (data: SubWorkFormData) => {
-    if (subWorkToEdit) {
-      updateSubWork(subWorkToEdit.id, {
-        ...data,
-        poValueGst: Number(data.poValueGst)
-      })
-    } else {
-      addSubWork({
-        ...data,
-        poValueGst: Number(data.poValueGst)
-      })
+  // Picking another PR pre-fills its amount and purpose.
+  const onPrChange = (nextPrId: string) => {
+    const next = purchaseRequisitions.find(item => item.id === nextPrId)
+    setValue('prId', nextPrId)
+    if (next) {
+      setValue('poValueGst', next.amount)
+      setValue('workDescription', next.purpose)
     }
-    onClose()
   }
+
+  const onSubmit = (data: PoFormData) => {
+    const common = {
+      poNumber: data.poNumber.trim(),
+      workDescription: data.workDescription.trim(),
+      supplierName: data.supplierName.trim(),
+      bpCode: data.bpCode.trim(),
+      payeeBpCode: data.payeeBpCode.trim() || data.bpCode.trim(),
+      poValueGst: valueLocked ? undefined : Number(data.poValueGst),
+      targetDate: data.targetDate,
+      quotesCompared: Number(data.quotesCompared),
+      lowestQuoteSelected: data.lowestQuoteSelected === 'yes',
+      selectionJustification: data.selectionJustification.trim()
+    }
+
+    if (subWorkToEdit) {
+      const saved = updateSubWork(subWorkToEdit.id, {
+        ...common,
+        status: data.status,
+        grnNumber: data.grnNumber.trim(),
+        grnDate: data.grnDate,
+        invoiceNumber: data.invoiceNumber.trim(),
+        invoiceDate: data.invoiceDate,
+        paidDate: data.paidDate
+      })
+      if (saved) onClose()
+      return
+    }
+
+    if (!pr || !task) return
+    const created = addSubWork({
+      ...common,
+      prId: pr.id,
+      projectId: task.projectId,
+      sectionId: task.sectionId,
+      phaseId: task.phaseId,
+      partId: task.partId,
+      milestoneId: task.milestoneId,
+      taskId: task.id,
+      wbsNumber: `${task.wbsNumber}.${subWorks.filter(po => po.taskId === task.id).length + 1}`,
+      status: 'PO Issued',
+      paidDate: ''
+    })
+    if (created) onClose()
+  }
+
+  const noPrs = !editing && approvedPrs.length === 0
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={subWorkToEdit ? 'Edit Sub-work PO Order' : 'Add Sub-work & PO (Level 5)'}
-      subtitle="Sub-work tracks discrete vendor contracts, Purchase Order values, and payment milestones."
+      title={editing ? `Edit PO ${subWorkToEdit?.poNumber}` : 'Create PO from approved PR'}
+      subtitle={
+        editing
+          ? 'The PR and work package of a PO cannot change. Value changes are checked against the budget ceiling.'
+          : 'Every PO starts from an approved purchase requisition and must fit inside it.'
+      }
       maxWidth="2xl"
     >
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        {/* Parent WBS Hierarchy Selections */}
-        <div className="p-3.5 bg-[#F8FAFC] rounded-[8px] border border-[#E2E8F0] space-y-3">
-          <p className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">
-            Parent WBS Hierarchy Binding
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Select
-              label="1. Project"
-              {...register('projectId', { required: 'Project is required' })}
-              options={projects.map(p => ({ value: p.id, label: `${p.code} - ${p.name}` }))}
-              disabled={!!subWorkToEdit}
-              required
-            />
-
-            <Select
-              label="1.1 Section"
-              {...register('sectionId', { required: 'Section is required' })}
-              options={availableSections.map(s => ({ value: s.id, label: `${s.wbsNumber} - ${s.name}` }))}
-              disabled={!!subWorkToEdit || availableSections.length === 0}
-              required
-            />
-
-            <Select
-              label="1.1.1 Section"
-              {...register('milestoneId', { required: 'Section is required' })}
-              options={availableMilestones.map(m => ({ value: m.id, label: `${m.wbsNumber} - ${m.name}` }))}
-              disabled={!!subWorkToEdit || availableMilestones.length === 0}
-              required
-            />
-
-            <Select
-              label="1.1.1.1 Work Package"
-              {...register('taskId', { required: 'Work Package is required' })}
-              options={availableTasks.map(t => ({ value: t.id, label: `${t.wbsNumber} - ${t.name}` }))}
-              disabled={!!subWorkToEdit || availableTasks.length === 0}
-              required
-            />
+      {noPrs ? (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-900">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              There is no approved PR to convert{defaultTaskId ? ' for this work package' : ''}. Raise a PR under
+              Procurement → Requisitions and have it approved first.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={onClose}>
+              Close
+            </Button>
           </div>
         </div>
+      ) : (
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <section className="space-y-3">
+            <SectionTitle>Source requisition</SectionTitle>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {editing ? (
+                <Input label="Purchase requisition" value={pr ? `${pr.prNumber} · ${formatINR(pr.amount)}` : 'Not linked'} readOnly disabled />
+              ) : (
+                <Select
+                  label="Approved PR"
+                  {...register('prId', { required: 'Choose an approved PR' })}
+                  onChange={event => onPrChange(event.target.value)}
+                  options={approvedPrs.map(item => ({
+                    value: item.id,
+                    label: `${item.prNumber} · ${formatINR(item.amount)}`
+                  }))}
+                  error={errors.prId?.message}
+                  required
+                />
+              )}
+              <Input label="Work package" value={task ? `${task.wbsNumber} ${task.name}` : '—'} readOnly disabled />
+            </div>
+            {task && (
+              <div className="rounded-xl border border-slate-200/80 bg-white/60 p-4">
+                <BudgetGauge
+                  budget={task.budgetAmount}
+                  committed={committedOthers}
+                  openPr={openOthers}
+                  request={value}
+                  requestLabel="This PO"
+                />
+                <p className={`mt-3 text-xs ${overLimit ? 'font-medium text-rose-600' : 'text-slate-500'}`}>
+                  {overLimit
+                    ? `Too high. The most this PO can be is ${formatINR(Math.max(limit, 0))}.`
+                    : `This PO can be up to ${formatINR(Math.max(limit, 0))}${editing ? '' : ' (the PR amount or the budget left, whichever is lower)'}.`}
+                </p>
+              </div>
+            )}
+          </section>
 
-        {/* WBS Number & Work Description */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          <Input
-            label="WBS Identifier"
-            {...register('wbsNumber', { required: 'WBS is required' })}
-            error={errors.wbsNumber?.message}
-            className="font-mono text-xs"
-            placeholder="1.1.1.1.1"
-            required
-          />
+          <section className="space-y-3">
+            <SectionTitle>Order</SectionTitle>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input
+                label="PO number"
+                {...register('poNumber', { required: 'Enter the PO number from SAP' })}
+                error={errors.poNumber?.message}
+                placeholder="e.g. 2521130014"
+                className="font-mono"
+                required
+              />
+              <Input
+                label="PO value incl. GST (₹)"
+                type="number"
+                inputMode="numeric"
+                {...register('poValueGst', {
+                  required: 'Enter the PO value',
+                  min: { value: 1, message: 'Must be more than zero' }
+                })}
+                error={errors.poValueGst?.message}
+                helperText={valueLocked ? 'Locked: this PO is billed, invoiced or paid.' : undefined}
+                disabled={valueLocked}
+                required
+              />
+              <div className="sm:col-span-2">
+                <Input
+                  label="What is being bought"
+                  {...register('workDescription', { required: 'Describe the order' })}
+                  error={errors.workDescription?.message}
+                  required
+                />
+              </div>
+              <Input
+                label="Target delivery date"
+                type="date"
+                {...register('targetDate', { required: 'Choose a date' })}
+                error={errors.targetDate?.message}
+                required
+              />
+              {editing && (
+                <Select label="Status" {...register('status')} options={STATUS_OPTIONS} />
+              )}
+            </div>
+          </section>
 
-          <div className="sm:col-span-3">
-            <Input
-              label="1. Work Description"
-              {...register('workDescription', { required: 'Work description is required' })}
-              error={errors.workDescription?.message}
-              placeholder="e.g. Thermo-Mechanically Treated (TMT) Rebar Cage Supply"
-              required
-            />
+          <section className="space-y-3">
+            <SectionTitle>Vendor and payee</SectionTitle>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="sm:col-span-3">
+                <Input
+                  label="Supplier name"
+                  {...register('supplierName', { required: 'Enter the supplier' })}
+                  error={errors.supplierName?.message}
+                  required
+                />
+              </div>
+              <Input
+                label="Vendor BP code"
+                {...register('bpCode', { required: 'Enter the BP code' })}
+                error={errors.bpCode?.message}
+                className="font-mono"
+                required
+              />
+              <Input
+                label="Payee BP code"
+                {...register('payeeBpCode')}
+                className="font-mono"
+                helperText="Leave blank if the vendor is paid"
+              />
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <SectionTitle>Quote selection</SectionTitle>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input
+                label="Quotes compared"
+                type="number"
+                min={0}
+                {...register('quotesCompared', { min: { value: 0, message: 'Cannot be negative' } })}
+                error={errors.quotesCompared?.message}
+              />
+              <Select
+                label="Lowest quote selected?"
+                {...register('lowestQuoteSelected')}
+                options={[
+                  { value: 'yes', label: 'Yes, lowest (L1) quote' },
+                  { value: 'no', label: 'No, another vendor' }
+                ]}
+              />
+              <div className="sm:col-span-2">
+                <label htmlFor="selectionJustification" className="field-label">
+                  Reason for selection
+                  {(lowest === 'no' || quotes < 3) && <span className="ml-1 text-rose-500">*</span>}
+                </label>
+                <textarea
+                  id="selectionJustification"
+                  className="field-control"
+                  rows={2}
+                  placeholder="Required when fewer than 3 quotes were compared or the lowest quote was not chosen"
+                  {...register('selectionJustification', {
+                    validate: text =>
+                      (lowest === 'yes' && quotes >= 3) || text.trim().length > 0 || 'Give the reason for this vendor'
+                  })}
+                />
+                {errors.selectionJustification && (
+                  <p className="mt-1 text-xs font-medium text-rose-600">{errors.selectionJustification.message}</p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {editing && (
+            <section className="space-y-3">
+              <SectionTitle>Receipt, invoice and payment</SectionTitle>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="GRN number" {...register('grnNumber')} className="font-mono" />
+                <Input label="GRN date" type="date" {...register('grnDate')} />
+                <Input label="Invoice number" {...register('invoiceNumber')} className="font-mono" />
+                <Input label="Invoice date" type="date" {...register('invoiceDate')} />
+                <Input label="Paid date" type="date" {...register('paidDate')} helperText="Leave blank until paid" />
+              </div>
+            </section>
+          )}
+
+          <div className="flex flex-col-reverse gap-2 border-t border-slate-200/70 pt-4 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={overLimit || (!editing && !pr)}>
+              {editing ? 'Save changes' : 'Create PO'}
+            </Button>
           </div>
-        </div>
-
-        {/* Supplier & BP Code */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="sm:col-span-2">
-            <Input
-              label="2. Supplier Name"
-              {...register('supplierName', { required: 'Supplier name is required' })}
-              error={errors.supplierName?.message}
-              placeholder="e.g. Tata Steel Rebar Solutions Ltd"
-              required
-            />
-          </div>
-
-          <Input
-            label="3. BP Code"
-            {...register('bpCode', { required: 'BP code is required' })}
-            error={errors.bpCode?.message}
-            className="font-mono text-xs"
-            placeholder="e.g. BP-50201"
-            required
-          />
-        </div>
-
-        {/* PO Number & PO Value + GST */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label="5. PO Number"
-            {...register('poNumber', { required: 'PO number is required' })}
-            error={errors.poNumber?.message}
-            className="font-mono text-xs"
-            placeholder="e.g. PO-2026-0211"
-            required
-          />
-
-          <Input
-            label="6. PO Value + GST (₹)"
-            type="number"
-            {...register('poValueGst', {
-              required: 'PO value is required',
-              min: { value: 1, message: 'Amount must be greater than 0' }
-            })}
-            error={errors.poValueGst?.message}
-            helperText="Aggregates directly into Project Committed PO"
-            required
-          />
-        </div>
-
-        {/* Target Date, Paid Date & Status */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Input
-            label="4. Target Date"
-            type="date"
-            {...register('targetDate', { required: 'Target date is required' })}
-            error={errors.targetDate?.message}
-            required
-          />
-
-          <Input
-            label="7. Paid Date (If settled)"
-            type="date"
-            {...register('paidDate')}
-            helperText="Leave empty if unpaid"
-          />
-
-          <Select
-            label="8. Status"
-            {...register('status', { required: 'Status is required' })}
-            options={[
-              { value: 'PO Issued', label: 'PO Issued' },
-              { value: 'In Execution', label: 'In Execution' },
-              { value: 'Billed', label: 'Billed (RA Bill)' },
-              { value: 'Paid', label: 'Paid & Closed' },
-              { value: 'Cancelled', label: 'Cancelled' }
-            ]}
-            required
-          />
-        </div>
-
-        <div className="flex justify-end gap-3 pt-3 border-t border-[#F1F5F9]">
-          <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={isSubmitting}>
-            {subWorkToEdit ? 'Save Changes' : 'Record Sub-work PO'}
-          </Button>
-        </div>
-      </form>
+        </form>
+      )}
     </Modal>
   )
 }

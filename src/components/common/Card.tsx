@@ -16,10 +16,8 @@ export const Card: React.FC<CardProps> = ({
   return (
     <div
       className={cn(
-        'rounded-[8px] border border-[#E2E8F0] transition-shadow duration-200',
-        glass 
-          ? 'bg-white/90 backdrop-blur-md shadow-xs' 
-          : 'bg-[#FFFFFF] shadow-[0_1px_3px_0_rgba(15,23,42,0.06),0_1px_2px_-1px_rgba(15,23,42,0.04)]',
+        'glass rounded-xl transition-shadow duration-200',
+        glass && 'glass-strong',
         !noPadding && 'p-5',
         className
       )}
@@ -30,14 +28,10 @@ export const Card: React.FC<CardProps> = ({
   )
 }
 
-export const CardHeader: React.FC<HTMLAttributes<HTMLDivElement>> = ({
-  children,
-  className,
-  ...props
-}) => {
+export const CardHeader: React.FC<HTMLAttributes<HTMLDivElement>> = ({ children, className, ...props }) => {
   return (
     <div
-      className={cn('flex items-center justify-between pb-3.5 mb-4 border-b border-[#F1F5F9]', className)}
+      className={cn('flex items-center justify-between pb-4 mb-4 border-b border-slate-200/70', className)}
       {...props}
     >
       {children}
@@ -66,10 +60,7 @@ export const CardDescription: React.FC<HTMLAttributes<HTMLParagraphElement>> = (
   ...props
 }) => {
   return (
-    <p
-      className={cn('text-xs text-[#64748B] mt-0.5', className)}
-      {...props}
-    >
+    <p className={cn('text-xs text-[#64748B] mt-0.5', className)} {...props}>
       {children}
     </p>
   )

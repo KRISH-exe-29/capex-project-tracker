@@ -80,12 +80,12 @@ export const Modal: React.FC<ModalProps> = ({
             role="dialog"
             aria-modal="true"
             className={cn(
-              'relative w-full bg-white rounded-[16px] border border-[#E2E8F0] shadow-2xl z-10 overflow-hidden my-auto',
+              'relative z-10 my-auto w-full overflow-hidden rounded-2xl glass-strong shadow-2xl',
               maxWidthClasses[maxWidth]
             )}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#F1F5F9] bg-[#F8FAFC]/50">
+            <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-200/70">
               <div>
                 <h3 className="text-lg font-bold text-[#0F172A] font-heading tracking-tight">
                   {title}
