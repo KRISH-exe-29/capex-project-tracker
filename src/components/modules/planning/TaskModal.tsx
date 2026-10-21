@@ -4,7 +4,8 @@ import { Modal } from '../../common/Modal'
 import { Input } from '../../common/Input'
 import { Select } from '../../common/Select'
 import { Button } from '../../common/Button'
-import type { Task, TaskStatus } from '../../../types/capex'
+import type { ProjectStage, Quarter, Task, TaskStatus } from '../../../types/capex'
+import { PROJECT_STAGES, QUARTERS } from '../../../data/capexLists'
 import { useCapex } from '../../../context/CapexContext'
 
 interface TaskModalProps {
@@ -26,7 +27,13 @@ interface TaskFormData {
   status: TaskStatus
   progress: number
   budgetAmount: number
+  quarter: Quarter | ''
+  cashflowMonth: string
+  handoverDate: string
+  stage: ProjectStage | ''
 }
+
+const SCHEDULE_FIELDS = ['quarter', 'cashflowMonth', 'handoverDate', 'stage'] as const
 
 const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
 
@@ -65,7 +72,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
         targetDate: taskToEdit.targetDate,
         status: taskToEdit.status,
         progress: taskToEdit.progress,
-        budgetAmount: taskToEdit.budgetAmount
+        budgetAmount: taskToEdit.budgetAmount,
+        quarter: taskToEdit.quarter ?? '',
+        cashflowMonth: taskToEdit.cashflowMonth ?? '',
+        handoverDate: taskToEdit.handoverDate ?? '',
+        stage: taskToEdit.stage ?? ''
       })
       return
     }
@@ -83,7 +94,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
       targetDate: inDays(90),
       status: 'Pending',
       progress: 0,
-      budgetAmount: 0
+      budgetAmount: 0,
+      quarter: '',
+      cashflowMonth: '',
+      handoverDate: '',
+      stage: 'Enquiry'
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, taskToEdit, defaultProjectId, defaultSectionId])
@@ -103,8 +118,15 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
   }
 
   const onSubmit = (data: TaskFormData) => {
+    const { quarter: _quarter, cashflowMonth: _month, handoverDate: _handover, stage: _stage, ...base } = data
+    const schedule: Partial<Task> = {}
+    // Only send schedule fields that changed, so an untouched blank is not logged as an edit.
+    SCHEDULE_FIELDS.forEach(key => {
+      if ((data[key] || '') !== (taskToEdit?.[key] ?? '')) Object.assign(schedule, { [key]: data[key] || undefined })
+    })
     const values = {
-      ...data,
+      ...base,
+      ...schedule,
       milestoneId: data.milestoneId || '',
       progress: Number(data.progress) || 0,
       budgetAmount: Number(data.budgetAmount)
@@ -225,6 +247,32 @@ export const TaskModal: React.FC<TaskModalProps> = ({ isOpen, onClose, taskToEdi
             })}
             error={errors.progress?.message}
           />
+        </div>
+
+        <div className="space-y-3 border-t border-slate-200/70 pt-4">
+          <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Schedule and stage</h4>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Select
+              label="Project stage"
+              {...register('stage')}
+              options={[
+                { value: '', label: 'Not set' },
+                ...PROJECT_STAGES.map((item, index) => ({ value: item, label: `${index + 1}. ${item}` }))
+              ]}
+            />
+            <Select
+              label="Quarter"
+              {...register('quarter')}
+              options={[{ value: '', label: 'Not set' }, ...QUARTERS.map(item => ({ value: item, label: item }))]}
+            />
+            <Input
+              label="Cashflow month"
+              type="month"
+              {...register('cashflowMonth')}
+              helperText="Month the money is expected to go out"
+            />
+            <Input label="Handover date" type="date" {...register('handoverDate')} />
+          </div>
         </div>
 
         <div className="flex flex-col-reverse gap-2 border-t border-slate-200/70 pt-4 sm:flex-row sm:justify-end">

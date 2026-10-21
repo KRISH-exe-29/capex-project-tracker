@@ -94,9 +94,12 @@ export function getExceptions(input: ExceptionInput, now = Date.now()): CapexExc
       })
     }
 
-    // 5. Billed or paid without GRN and invoice
-    if ((po.status === 'Billed' || po.status === 'Paid') && (!po.grnNumber || !po.invoiceNumber)) {
-      const missing = [!po.grnNumber && 'GRN', !po.invoiceNumber && 'invoice'].filter(Boolean).join(' and ')
+    // 5. Billed or paid without GRN and invoice (on the PO or on any of its payments)
+    const livePayments = (po.payments ?? []).filter(item => !item.reversed)
+    const hasGrn = Boolean(po.grnNumber) || livePayments.some(item => item.grnNumber)
+    const hasInvoice = Boolean(po.invoiceNumber) || livePayments.some(item => item.invoiceNumber)
+    if ((po.status === 'Billed' || po.status === 'Part Paid' || po.status === 'Paid') && (!hasGrn || !hasInvoice)) {
+      const missing = [!hasGrn && 'GRN', !hasInvoice && 'invoice'].filter(Boolean).join(' and ')
       push({
         severity: 'Control gap',
         title: `${po.status} without ${missing}`,

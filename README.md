@@ -53,4 +53,4 @@ Moving to the EPMS stack (Supabase/Postgres with real login, RLS, database const
 
 ## Logo
 
-The sidebar loads `public/indotech-logo.png` if present; otherwise it draws a vector INDO TECH wordmark. Put the official logo file at that path to use it.
+The sidebar uses the official INDO TECH logo from `src/assets/indotech-logo.jpg` (a 720 × 120 copy of the company artwork). To change it, replace that file with the new artwork at the same 6:1 proportion.

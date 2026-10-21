@@ -21,6 +21,7 @@ import { PageHeader, StatCard, StatGrid } from '../../common/PageHeader'
 import { ProjectModal } from '../planning/ProjectModal'
 import { getExceptions } from '../../../utils/exceptions'
 import { formatINR } from '../../../utils/formatters'
+import { paidTotal } from '../../../utils/capexRules'
 import type { ActiveModule } from '../../../types/capex'
 
 const STEPS: { title: string; text: string; module: ActiveModule; icon: React.ReactNode }[] = [
@@ -73,7 +74,7 @@ export const DashboardView: React.FC = () => {
   const committed = filteredSubWorks
     .filter(po => po.status !== 'Cancelled')
     .reduce((sum, po) => sum + po.poValueGst, 0)
-  const paid = filteredSubWorks.filter(po => po.status === 'Paid').reduce((sum, po) => sum + po.poValueGst, 0)
+  const paid = filteredSubWorks.reduce((sum, po) => sum + paidTotal(po), 0)
   const openPrValue = filteredPrs
     .filter(pr => pr.status === 'Pending Approval' || pr.status === 'Approved')
     .reduce((sum, pr) => sum + pr.amount, 0)

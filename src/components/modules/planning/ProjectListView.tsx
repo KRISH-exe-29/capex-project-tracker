@@ -7,7 +7,7 @@ import { EmptyState } from '../../common/EmptyState'
 import { PageHeader } from '../../common/PageHeader'
 import { FilterSelect, SearchInput, Toolbar } from '../../common/Toolbar'
 import { IconButton } from '../../common/IconButton'
-import { ConfirmDialog } from '../../common/ConfirmDialog'
+import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectModal } from './ProjectModal'
 import { useCapex } from '../../../context/CapexContext'
 import type { Project } from '../../../types/capex'
@@ -38,10 +38,12 @@ export const ProjectListView: React.FC = () => {
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase()
-    return projects.filter(project => {
-      if (status !== 'ALL' && project.status !== status) return false
-      return !needle || `${project.code} ${project.name} ${project.location}`.toLowerCase().includes(needle)
-    })
+    return projects
+      .filter(project => {
+        if (status !== 'ALL' && project.status !== status) return false
+        return !needle || `${project.code} ${project.name} ${project.location}`.toLowerCase().includes(needle)
+      })
+      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
   }, [projects, search, status])
 
   const hasFinance = (projectId: string) =>
@@ -103,9 +105,7 @@ export const ProjectListView: React.FC = () => {
               <thead>
                 <tr>
                   <th>Project</th>
-                  <th>Timeline</th>
-                  <th>Start</th>
-                  <th>End</th>
+                  <th>Schedule</th>
                   <th className="num">Approved</th>
                   <th className="num">PO committed</th>
                   <th className="num">Balance</th>
@@ -127,9 +127,12 @@ export const ProjectListView: React.FC = () => {
                         </div>
                       </div>
                     </td>
-                    <td className="whitespace-nowrap">{project.executionTimeline}</td>
-                    <td className="whitespace-nowrap">{formatDate(project.startDate || project.approvedDate)}</td>
-                    <td className="whitespace-nowrap">{formatDate(project.endDate)}</td>
+                    <td className="whitespace-nowrap">
+                      <div>
+                        {formatDate(project.startDate || project.approvedDate)} – {formatDate(project.endDate)}
+                      </div>
+                      <div className="text-xs text-slate-500">{project.executionTimeline}</div>
+                    </td>
                     <td className="num font-semibold text-slate-900">{formatINR(project.approvedAmount)}</td>
                     <td className="num">{formatINR(project.poValue)}</td>
                     <td className={`num font-semibold ${project.balanceAmount < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
@@ -178,12 +181,10 @@ export const ProjectListView: React.FC = () => {
       </Card>
 
       <ProjectModal isOpen={modalOpen} onClose={() => setModalOpen(false)} projectToEdit={editing} />
-      <ConfirmDialog
-        isOpen={deleting !== null}
-        title={`Delete ${deleting?.code ?? 'project'}?`}
-        message="This removes the project with its phases, sections, work packages, team, progress reports and documents. The deletion is recorded in the Activity Log."
-        confirmLabel="Delete project"
-        onConfirm={() => deleting && deleteProject(deleting.id)}
+      <DeleteProjectDialog
+        project={deleting}
+        projects={projects}
+        onConfirm={closeGap => deleting && deleteProject(deleting.id, { closeGap })}
         onClose={() => setDeleting(null)}
       />
     </div>

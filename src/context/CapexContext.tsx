@@ -5,6 +5,7 @@ import type {
   AuditEntry,
   BudgetRevision,
   DprRecord,
+  Payment,
   Milestone,
   ModuleKey,
   Project,
@@ -34,8 +35,22 @@ import {
   INITIAL_TEAM,
   INITIAL_USER_PERMISSIONS
 } from '../data/initialData'
-import { canApprove, canCancelPo, canCreatePo, canEditPo, canRaisePr, committed, isSettled, openPr } from '../utils/capexRules'
+import {
+  canAddPayment,
+  canApprove,
+  canCancelPo,
+  canCreatePo,
+  canEditPo,
+  canRaisePr,
+  committed,
+  isSettled,
+  openPr,
+  paidTotal,
+  paymentTotal,
+  statusAfterPayments
+} from '../utils/capexRules'
 import { formatINR } from '../utils/formatters'
+import { closeGapAfter, nextProjectCode } from '../utils/projectCodes'
 
 type ToastMessage = { id: string; message: string; type: 'success' | 'warning' | 'error' | 'info' }
 type New<T> = Omit<T, 'id'>
@@ -91,9 +106,12 @@ interface CapexContextType extends Omit<Collections, 'projects'> {
   filteredDocuments: ProjectDocument[]
   filteredPrs: PurchaseRequisition[]
 
-  addProject: (value: Omit<Project, 'id' | 'poValue' | 'balanceAmount'>) => void
+  /** The code is assigned here (CPX-<year>-<nn>); any code passed in is ignored. */
+  addProject: (value: Omit<Project, 'id' | 'poValue' | 'balanceAmount' | 'code'>) => void
+  /** The project code is locked and cannot be changed here. */
   updateProject: (id: string, value: Partial<Project>) => void
-  deleteProject: (id: string) => void
+  /** `closeGap` renumbers later projects of the same year down by one. */
+  deleteProject: (id: string, options?: { closeGap?: boolean }) => void
   addPhase: (value: New<ProjectPhase>) => void
   updatePhase: (id: string, value: Partial<ProjectPhase>) => void
   deletePhase: (id: string) => void
@@ -112,6 +130,12 @@ interface CapexContextType extends Omit<Collections, 'projects'> {
   addSubWork: (value: New<SubWork>) => boolean
   updateSubWork: (id: string, value: Partial<SubWork>) => boolean
   cancelSubWork: (id: string, reason: string) => void
+  /** Record one instalment. `payeeBpCode` (optional) updates who the PO is paid to. */
+  addPayment: (
+    poId: string,
+    value: Omit<Payment, 'id' | 'recordedBy' | 'recordedAt' | 'reversed'> & { payeeBpCode?: string }
+  ) => boolean
+  reversePayment: (poId: string, paymentId: string, reason: string) => boolean
   addTeamMember: (value: New<TeamMember>) => void
   updateTeamMember: (id: string, value: Partial<TeamMember>) => void
   deleteTeamMember: (id: string) => void
@@ -186,6 +210,24 @@ function persist(key: string, value: unknown) {
   }
 }
 
+/** Older saved data held one payment per PO (status Paid + paid date); turn it into a single full payment. */
+function migratePayments(po: SubWork): SubWork {
+  if (po.payments || !(po.status === 'Paid' || po.paidDate)) return po
+  const legacy: Payment = {
+    id: `pay-${po.id}-legacy`,
+    paidDate: po.paidDate || '',
+    taxableAmount: Math.round(po.poValueGst),
+    gstAmount: 0,
+    grnNumber: po.grnNumber ?? '',
+    invoiceNumber: po.invoiceNumber ?? '',
+    invoiceDate: po.invoiceDate,
+    note: 'Carried over from the earlier single-payment record (full PO value).',
+    recordedBy: 'system',
+    recordedAt: new Date().toISOString()
+  }
+  return { ...po, payments: [legacy], status: 'Paid' }
+}
+
 const MONEY_FIELDS = new Set([
   'approvedAmount',
   'estimatedCost',
@@ -193,7 +235,9 @@ const MONEY_FIELDS = new Set([
   'poValueGst',
   'amount',
   'oldBudget',
-  'newBudget'
+  'newBudget',
+  'taxableAmount',
+  'gstAmount'
 ])
 const PAYMENT_FIELDS = new Set<string>([
   'status',
@@ -219,7 +263,8 @@ function describeChanges<T extends object>(before: T, after: T): { before: strin
   const oldValues = before as Record<string, unknown>
   const newValues = after as Record<string, unknown>
   const changed = Object.keys(newValues).filter(
-    key => !IGNORED_FIELDS.has(key) && JSON.stringify(oldValues[key]) !== JSON.stringify(newValues[key])
+    // Blank and missing are the same value, so an untouched empty field is not logged as a change.
+    key => !IGNORED_FIELDS.has(key) && JSON.stringify(oldValues[key] ?? '') !== JSON.stringify(newValues[key] ?? '')
   )
   if (!changed.length) return null
   return {
@@ -251,7 +296,7 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     sections: stored('sections', INITIAL_SECTIONS),
     milestones: stored('milestones', INITIAL_MILESTONES),
     tasks: stored('tasks', INITIAL_TASKS),
-    subWorks: stored('subworks', INITIAL_SUBWORKS),
+    subWorks: stored<SubWork[]>('subworks', INITIAL_SUBWORKS).map(migratePayments),
     teamMembers: stored('team', INITIAL_TEAM),
     dprRecords: stored('dpr', INITIAL_DPR),
     documents: stored('documents', INITIAL_DOCUMENTS),
@@ -472,7 +517,8 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     remove(recordId, cascade)
   }
 
-  const deleteProject = (projectId: string) => {
+  const deleteProject = (projectId: string, options: { closeGap?: boolean } = {}) => {
+    const deletedCode = db.current.projects.find(item => item.id === projectId)?.code
     const inProject = <T extends { projectId: string }>(items: T[]) =>
       items.filter(item => item.projectId !== projectId)
     if (
@@ -493,6 +539,24 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       dprRecords: inProject(state.dprRecords),
       documents: inProject(state.documents)
     }))
+    const removed = deletedCode !== undefined && !db.current.projects.some(item => item.id === projectId)
+    if (!removed || !options.closeGap) return
+    const moves = closeGapAfter(deletedCode, db.current.projects)
+    if (!moves.length) return
+    const target = new Map(moves.map(move => [move.id, move.to]))
+    commit(
+      { projects: db.current.projects.map(item => (target.has(item.id) ? { ...item, code: target.get(item.id)! } : item)) },
+      ...moves.map(move => ({
+        action: 'update' as const,
+        entityType: 'Project',
+        entityId: move.id,
+        entityLabel: move.to,
+        before: `code: ${move.from}`,
+        after: `code: ${move.to}`,
+        reason: `Sequence closed after deleting ${deletedCode}`
+      }))
+    )
+    addToast(`${moves.length} later project(s) renumbered to close the gap left by ${deletedCode}.`, 'info')
   }
 
   // ---------- Work packages (budget lines) ----------
@@ -664,6 +728,10 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       addToast('Use Cancel PO and give a reason.', 'error')
       return false
     }
+    if ((updates.status === 'Part Paid' || updates.status === 'Paid') && updates.status !== current.status) {
+      addToast('Paid and Part paid follow the payments. Record payments in Billing.', 'error')
+      return false
+    }
     // The links that tie a PO to its budget line and PR never change after creation.
     const next: SubWork = {
       ...current,
@@ -676,6 +744,7 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       partId: current.partId,
       milestoneId: current.milestoneId,
       prId: current.prId,
+      payments: current.payments,
       poValueGst:
         updates.poValueGst === undefined ? current.poValueGst : Math.round(Number(updates.poValueGst) || 0)
     }
@@ -693,6 +762,7 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return false
       }
     }
+    if (paidTotal(next) > 0) next.status = statusAfterPayments(next, next.status)
     const change = describeChanges(current, next)
     if (!change) return true
     commit(
@@ -733,6 +803,87 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     )
     addToast(`PO ${current.poNumber} cancelled. ${formatINR(current.poValueGst)} is back on the budget line.`, 'warning')
+  }
+
+  // ---------- Payments (instalments against a PO) ----------
+  const addPayment: CapexContextType['addPayment'] = (poId, value) => {
+    if (!permitted('finance', 'edit')) return false
+    const current = db.current.subWorks.find(po => po.id === poId)
+    if (!current) return false
+    if (!value.paidDate || !value.grnNumber.trim() || !value.invoiceNumber.trim()) {
+      addToast('A payment needs its paid date, GRN number and invoice number.', 'error')
+      return false
+    }
+    const taxableAmount = Math.round(Number(value.taxableAmount) || 0)
+    const gstAmount = Math.round(Number(value.gstAmount) || 0)
+    const check = canAddPayment(current, taxableAmount, gstAmount)
+    if (!check.ok) {
+      logBlocked('Payment', poId, current.poNumber, check.reason ?? 'Blocked')
+      return false
+    }
+    const payment: Payment = {
+      id: newId('pay'),
+      paidDate: value.paidDate,
+      taxableAmount,
+      gstAmount,
+      grnNumber: value.grnNumber.trim(),
+      invoiceNumber: value.invoiceNumber.trim(),
+      invoiceDate: value.invoiceDate || undefined,
+      note: value.note?.trim() || undefined,
+      recordedBy: actor()?.userName ?? 'Unknown user',
+      recordedAt: new Date().toISOString()
+    }
+    const next: SubWork = {
+      ...current,
+      payeeBpCode: value.payeeBpCode?.trim() || current.payeeBpCode || current.bpCode,
+      payments: [...(current.payments ?? []), payment]
+    }
+    next.status = statusAfterPayments(next, current.status)
+    const balance = Math.round(next.poValueGst) - paidTotal(next)
+    commit(
+      { subWorks: db.current.subWorks.map(po => (po.id === poId ? next : po)) },
+      {
+        action: 'create',
+        entityType: 'Payment',
+        entityId: payment.id,
+        entityLabel: `${current.poNumber} · ${payment.invoiceNumber}`,
+        after: `paid: ${formatINR(paymentTotal(payment))} (taxable ${formatINR(taxableAmount)} + GST ${formatINR(gstAmount)}); balance: ${formatINR(balance)}; status: ${next.status}`
+      }
+    )
+    addToast(`Payment of ${formatINR(paymentTotal(payment))} recorded on PO ${current.poNumber}.`)
+    return true
+  }
+
+  const reversePayment = (poId: string, paymentId: string, reason: string) => {
+    if (!permitted('finance', 'edit')) return false
+    const current = db.current.subWorks.find(po => po.id === poId)
+    const payment = current?.payments?.find(item => item.id === paymentId)
+    if (!current || !payment || payment.reversed) return false
+    if (!reason.trim()) {
+      addToast('Give a reason for reversing the payment.', 'error')
+      return false
+    }
+    const reversed = { by: actor()?.userName ?? 'Unknown user', at: new Date().toISOString(), reason: reason.trim() }
+    const next: SubWork = {
+      ...current,
+      payments: current.payments!.map(item => (item.id === paymentId ? { ...item, reversed } : item))
+    }
+    // With nothing left paid, the PO goes back to invoiced-but-unpaid.
+    next.status = statusAfterPayments(next, 'Billed')
+    commit(
+      { subWorks: db.current.subWorks.map(po => (po.id === poId ? next : po)) },
+      {
+        action: 'update',
+        entityType: 'Payment',
+        entityId: paymentId,
+        entityLabel: `${current.poNumber} · ${payment.invoiceNumber}`,
+        before: `paid: ${formatINR(paymentTotal(payment))}; status: ${current.status}`,
+        after: `reversed; status: ${next.status}`,
+        reason: reversed.reason
+      }
+    )
+    addToast(`Payment of ${formatINR(paymentTotal(payment))} on PO ${current.poNumber} reversed.`, 'warning')
+    return true
   }
 
   // ---------- Purchase requisitions ----------
@@ -1096,8 +1247,21 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     filteredDpr: byProject(data.dprRecords),
     filteredDocuments: byProject(data.documents),
     filteredPrs: byProject(data.purchaseRequisitions),
-    addProject: value => project.add({ ...value, poValue: 0, balanceAmount: Math.round(value.approvedAmount) }),
-    updateProject: project.update,
+    addProject: value =>
+      project.add({
+        ...value,
+        // Assigned from the latest saved list, so two quick saves never get the same number.
+        code: nextProjectCode(
+          db.current.projects.map(item => item.code),
+          new Date().getFullYear()
+        ),
+        poValue: 0,
+        balanceAmount: Math.round(value.approvedAmount)
+      }),
+    updateProject: (projectId, value) => {
+      const { code: _lockedCode, ...rest } = value
+      project.update(projectId, rest)
+    },
     deleteProject,
     addPhase: phase.add,
     updatePhase: phase.update,
@@ -1142,6 +1306,8 @@ export const CapexProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     addSubWork,
     updateSubWork,
     cancelSubWork,
+    addPayment,
+    reversePayment,
     addTeamMember: team.add,
     updateTeamMember: team.update,
     deleteTeamMember: memberId => team.remove(memberId),

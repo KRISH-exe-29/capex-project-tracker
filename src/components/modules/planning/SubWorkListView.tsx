@@ -14,7 +14,7 @@ import type { SubWork } from '../../../types/capex'
 import { formatDate, formatINR } from '../../../utils/formatters'
 import { isSettled } from '../../../utils/capexRules'
 
-const STATUS_OPTIONS = ['ALL', 'PO Issued', 'In Execution', 'Billed', 'Paid', 'Cancelled']
+const STATUS_OPTIONS = ['ALL', 'PO Issued', 'In Execution', 'Billed', 'Part Paid', 'Paid', 'Cancelled']
 
 export const SubWorkListView: React.FC = () => {
   const { tasks, projects, purchaseRequisitions, filteredSubWorks, cancelSubWork, hasPermission, openRecord } =
@@ -36,7 +36,7 @@ export const SubWorkListView: React.FC = () => {
       if (status !== 'ALL' && po.status !== status) return false
       if (!needle) return true
       const project = projects.find(item => item.id === po.projectId)
-      return [po.workDescription, po.supplierName, po.bpCode, po.poNumber, po.wbsNumber, project?.name]
+      return [po.workDescription, po.subCategory, po.supplierName, po.bpCode, po.poNumber, po.wbsNumber, project?.name]
         .join(' ')
         .toLowerCase()
         .includes(needle)
@@ -104,9 +104,7 @@ export const SubWorkListView: React.FC = () => {
                   <th>PO no.</th>
                   <th>Work description</th>
                   <th>Supplier</th>
-                  <th>Work package</th>
                   <th className="num">Value incl. GST</th>
-                  <th>Target</th>
                   <th>Status</th>
                   <th className="actions">Actions</th>
                 </tr>
@@ -120,12 +118,16 @@ export const SubWorkListView: React.FC = () => {
                       <td>
                         <div className="mono-num font-semibold text-blue-700">{po.poNumber}</div>
                         <div className="mono-num text-xs text-slate-500">{prNumber(po.prId) ?? 'No PR'}</div>
+                        <div className="text-xs text-slate-500">{po.poDate ? formatDate(po.poDate) : 'No PO date'}</div>
                       </td>
-                      <td className="max-w-[260px]">
+                      <td className="max-w-[240px]">
                         <p className="truncate font-medium text-slate-800" title={po.workDescription}>
                           {po.workDescription}
                         </p>
-                        <p className="mono-num text-xs text-slate-400">{po.wbsNumber}</p>
+                        <p className="truncate text-xs text-slate-500">
+                          {task ? `${task.wbsNumber} ${task.name}` : 'Work package removed'}
+                          {po.subCategory && ` · ${po.subCategory}`}
+                        </p>
                       </td>
                       <td className="max-w-[200px]">
                         <p className="truncate" title={po.supplierName}>
@@ -133,13 +135,10 @@ export const SubWorkListView: React.FC = () => {
                         </p>
                         <p className="mono-num text-xs text-slate-500">BP {po.bpCode}</p>
                       </td>
-                      <td className="max-w-[200px]">
-                        <p className="truncate text-slate-600">{task ? `${task.wbsNumber} ${task.name}` : '—'}</p>
-                      </td>
                       <td className="num font-semibold text-slate-900">{formatINR(po.poValueGst)}</td>
-                      <td className="whitespace-nowrap">{formatDate(po.targetDate)}</td>
                       <td>
                         <StatusBadge status={po.status} />
+                        <div className="mt-1 whitespace-nowrap text-xs text-slate-500">due {formatDate(po.targetDate)}</div>
                       </td>
                       <td className="actions">
                         <div className="flex justify-end gap-1">

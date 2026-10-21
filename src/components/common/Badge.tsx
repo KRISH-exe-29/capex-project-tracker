@@ -65,12 +65,17 @@ const STATUS_VARIANTS: Record<string, BadgeVariant> = {
   'po issued': 'info',
   'in execution': 'default',
   billed: 'violet',
+  'part paid': 'warning',
   paid: 'success',
   cancelled: 'neutral',
   // PR and revisions
   'pending approval': 'warning',
   rejected: 'danger',
   'converted to po': 'info',
+  // Work package delivery (master sheet Project Status)
+  'po to be placed': 'neutral',
+  'po placed work in progress': 'default',
+  'work completed': 'success',
   // DPR / documents / users
   submitted: 'info',
   verified: 'violet',

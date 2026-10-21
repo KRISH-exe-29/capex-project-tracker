@@ -7,6 +7,7 @@ import { Button } from '../../common/Button'
 import { Project, ProjectStatus } from '../../../types/capex'
 import { useCapex } from '../../../context/CapexContext'
 import { calculateTimeline } from '../../../utils/formatters'
+import { nextProjectCode } from '../../../utils/projectCodes'
 
 interface ProjectModalProps {
   isOpen: boolean
@@ -15,7 +16,6 @@ interface ProjectModalProps {
 }
 
 interface ProjectFormData {
-  code: string
   name: string
   approvedAmount: number
   approvedDate: string
@@ -32,7 +32,9 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   onClose,
   projectToEdit
 }) => {
-  const { addProject, updateProject } = useCapex()
+  const { addProject, updateProject, projects } = useCapex()
+  // Preview only; the context assigns the final number when the project is saved.
+  const displayCode = projectToEdit?.code ?? nextProjectCode(projects.map(item => item.code), new Date().getFullYear())
 
   const {
     register,
@@ -43,7 +45,6 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
     formState: { errors, isSubmitting }
   } = useForm<ProjectFormData>({
     defaultValues: {
-      code: `CPX-2026-${Math.floor(100 + Math.random() * 900)}`,
       name: '',
       approvedAmount: 10000000,
       approvedDate: new Date().toISOString().split('T')[0],
@@ -72,7 +73,6 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   useEffect(() => {
     if (projectToEdit) {
       reset({
-        code: projectToEdit.code,
         name: projectToEdit.name,
         approvedAmount: projectToEdit.approvedAmount,
         approvedDate: projectToEdit.approvedDate,
@@ -85,8 +85,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       })
     } else {
       reset({
-        code: `CPX-2026-${Math.floor(100 + Math.random() * 900)}`,
-        name: '',
+          name: '',
         approvedAmount: 15000000,
         approvedDate: new Date().toISOString().split('T')[0],
         startDate: new Date().toISOString().split('T')[0],
@@ -104,7 +103,6 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
 
     if (projectToEdit) {
       updateProject(projectToEdit.id, {
-        code: data.code,
         name: data.name,
         approvedAmount: Number(data.approvedAmount),
         approvedDate: data.approvedDate,
@@ -118,7 +116,6 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       })
     } else {
       addProject({
-        code: data.code,
         name: data.name,
         approvedAmount: Number(data.approvedAmount),
         approvedDate: data.approvedDate,
@@ -138,7 +135,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={projectToEdit ? 'Edit CAPEX Project' : 'Create New CAPEX Project'}
+      title={projectToEdit ? `Edit ${projectToEdit.code}` : 'Create New CAPEX Project'}
       subtitle="Define approved capital expenditure budget, execution timeline, and governance records."
       maxWidth="2xl"
     >
@@ -146,12 +143,12 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
         {/* Row 1: Code & Status */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Input
-            label="Project Code"
-            {...register('code', { required: 'Project code is required' })}
-            error={errors.code?.message}
-            className="font-mono text-xs uppercase"
-            placeholder="e.g. CPX-2026-005"
-            required
+            label="Project code"
+            value={displayCode}
+            readOnly
+            disabled
+            className="font-mono"
+            helperText={projectToEdit ? 'Locked. It changes only if an earlier project is deleted and the gap is closed.' : 'Assigned automatically in sequence.'}
           />
 
           <div className="sm:col-span-2">

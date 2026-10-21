@@ -8,7 +8,7 @@ import { Badge, StatusBadge } from '../../common/Badge'
 import { useCapex } from '../../../context/CapexContext'
 import type { DocumentCategory, ProjectDocument } from '../../../types/capex'
 import { documentsForPo, getExceptions } from '../../../utils/exceptions'
-import { committed, openPr } from '../../../utils/capexRules'
+import { committed, openPr, paidTotal, paymentTotal } from '../../../utils/capexRules'
 import { formatDate, formatINR } from '../../../utils/formatters'
 import { cn } from '../../../utils/cn'
 import { SubWorkModal } from '../planning/SubWorkModal'
@@ -84,13 +84,11 @@ export const DossierView: React.FC = () => {
     }
   }, [attach, po, pr])
 
-  const history = useMemo(
-    () =>
-      po
-        ? auditLog.filter(entry => entry.entityId === po.id || (pr && entry.entityId === pr.id))
-        : [],
-    [auditLog, po, pr]
-  )
+  const history = useMemo(() => {
+    if (!po) return []
+    const ids = new Set([po.id, ...(pr ? [pr.id] : []), ...(po.payments ?? []).map(item => item.id)])
+    return auditLog.filter(entry => ids.has(entry.entityId))
+  }, [auditLog, po, pr])
 
   if (!po) {
     return (
@@ -120,6 +118,14 @@ export const DossierView: React.FC = () => {
       : { title, state: 'missing', detail: missingText, attach: category }
   }
 
+  const livePayments = (po.payments ?? []).filter(item => !item.reversed)
+  const join = (values: (string | undefined)[]) => [...new Set(values.filter(Boolean))].join(', ')
+  const grnNumbers = join([po.grnNumber, ...livePayments.map(item => item.grnNumber)])
+  const invoiceNumbers = join([po.invoiceNumber, ...livePayments.map(item => item.invoiceNumber)])
+  const paid = paidTotal(po)
+  const payeeDiffers = Boolean(po.payeeBpCode && po.payeeBpCode !== po.bpCode)
+  const lastPaidDate = livePayments.map(item => item.paidDate).sort().at(-1)
+
   const quoteNeedsReason =
     ((po.quotesCompared ?? 0) < 3 || po.lowestQuoteSelected === false) && !po.selectionJustification?.trim()
 
@@ -144,35 +150,34 @@ export const DossierView: React.FC = () => {
       ...(byCategory('PO Copy').length ? {} : { state: 'warning' as const }),
       reference: po.poNumber
     },
-    po.grnNumber
+    grnNumbers
       ? {
           title: 'Goods receipt (GRN)',
           state: byCategory('GRN').length ? 'done' : 'warning',
           detail: byCategory('GRN').length ? docLabel(byCategory('GRN')) : 'GRN number recorded; document not attached.',
-          reference: `${po.grnNumber}${po.grnDate ? ` · ${formatDate(po.grnDate)}` : ''}`,
+          reference: grnNumbers,
           attach: byCategory('GRN').length ? undefined : 'GRN'
         }
       : { title: 'Goods receipt (GRN)', state: 'missing', detail: 'No goods receipt recorded yet.' },
-    po.invoiceNumber
+    invoiceNumbers
       ? {
           title: 'Vendor invoice',
           state: byCategory('Invoice').length ? 'done' : 'warning',
           detail: byCategory('Invoice').length
             ? docLabel(byCategory('Invoice'))
             : 'Invoice number recorded; document not attached.',
-          reference: `${po.invoiceNumber}${po.invoiceDate ? ` · ${formatDate(po.invoiceDate)}` : ''}`,
+          reference: invoiceNumbers,
           attach: byCategory('Invoice').length ? undefined : 'Invoice'
         }
       : { title: 'Vendor invoice', state: 'missing', detail: 'No invoice recorded yet.' },
-    po.status === 'Paid'
+    paid > 0
       ? {
           title: 'Payment',
-          state: po.payeeBpCode && po.payeeBpCode !== po.bpCode ? 'warning' : 'done',
-          detail:
-            po.payeeBpCode && po.payeeBpCode !== po.bpCode
-              ? `Paid to BP ${po.payeeBpCode}, not the vendor BP ${po.bpCode}.`
-              : `Paid to ${po.supplierName} (BP ${po.bpCode}).`,
-          reference: po.paidDate ? formatDate(po.paidDate) : undefined
+          state: payeeDiffers || po.status !== 'Paid' ? 'warning' : 'done',
+          detail: `${po.status === 'Paid' ? 'Fully paid' : `${formatINR(paid)} of ${formatINR(po.poValueGst)} paid`} in ${livePayments.length} ${livePayments.length === 1 ? 'payment' : 'payments'}${
+            payeeDiffers ? `, to BP ${po.payeeBpCode}, not the vendor BP ${po.bpCode}` : ` to ${po.supplierName} (BP ${po.bpCode})`
+          }.`,
+          reference: lastPaidDate ? formatDate(lastPaidDate) : undefined
         }
       : {
           title: 'Payment',
@@ -182,7 +187,6 @@ export const DossierView: React.FC = () => {
   ]
 
   const doneCount = steps.filter(step => step.state === 'done').length
-  const paid = po.status === 'Paid' ? po.poValueGst : 0
   const canEdit = hasPermission('planning', 'edit') && po.status !== 'Cancelled'
   const canAttach = hasPermission('document', 'create')
 
@@ -272,6 +276,8 @@ export const DossierView: React.FC = () => {
               <CardTitle>Money trail</CardTitle>
             </CardHeader>
             <dl className="space-y-2 text-sm">
+              <KeyValue label="PO date" value={po.poDate ? formatDate(po.poDate) : '—'} />
+              <KeyValue label="Sub category" mono={false} value={po.subCategory || '—'} />
               <KeyValue label="Work package budget" value={task ? formatINR(task.budgetAmount) : '—'} />
               <KeyValue label="PR amount" value={pr ? formatINR(pr.amount) : '—'} />
               <KeyValue label="PO value (incl. GST)" value={formatINR(po.poValueGst)} />
@@ -342,6 +348,55 @@ export const DossierView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {(po.payments ?? []).length > 0 && (
+        <Card noPadding>
+          <div className="border-b border-slate-200/70 px-5 py-4">
+            <h3 className="font-heading text-base font-semibold text-slate-900">Payments</h3>
+            <p className="text-xs text-slate-500">Each instalment with its running balance. Reversed payments do not count.</p>
+          </div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Paid date</th>
+                  <th className="num">Taxable</th>
+                  <th className="num">GST</th>
+                  <th className="num">Total</th>
+                  <th className="num">Balance after</th>
+                  <th>GRN</th>
+                  <th>Invoice</th>
+                  <th>Recorded by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  let balance = po.poValueGst
+                  return [...(po.payments ?? [])]
+                    .sort((a, b) => a.paidDate.localeCompare(b.paidDate))
+                    .map(payment => {
+                      if (!payment.reversed) balance -= paymentTotal(payment)
+                      return (
+                        <tr key={payment.id} className={payment.reversed ? 'text-slate-400' : ''}>
+                          <td className="whitespace-nowrap">{formatDate(payment.paidDate)}</td>
+                          <td className="num">{formatINR(payment.taxableAmount)}</td>
+                          <td className="num">{formatINR(payment.gstAmount)}</td>
+                          <td className="num font-semibold">
+                            {payment.reversed ? <s>{formatINR(paymentTotal(payment))}</s> : formatINR(paymentTotal(payment))}
+                          </td>
+                          <td className="num">{payment.reversed ? `Reversed: ${payment.reversed.reason}` : formatINR(balance)}</td>
+                          <td className="mono-num text-xs">{payment.grnNumber || '—'}</td>
+                          <td className="mono-num text-xs">{payment.invoiceNumber || '—'}</td>
+                          <td className="text-xs">{payment.recordedBy}</td>
+                        </tr>
+                      )
+                    })
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <Card noPadding>
         <div className="border-b border-slate-200/70 px-5 py-4">

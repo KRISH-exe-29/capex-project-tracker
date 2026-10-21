@@ -4,13 +4,14 @@ import { TrendingUp, Layers } from 'lucide-react'
 import { Card, CardDescription, CardTitle } from '../../common/Card'
 import { useCapex } from '../../../context/CapexContext'
 import { formatINR } from '../../../utils/formatters'
+import { paymentTotal } from '../../../utils/capexRules'
 
 const monthKey = (iso: string) => iso.slice(0, 7)
 const monthLabel = (key: string) =>
   new Date(`${key}-01T00:00:00`).toLocaleString('en-IN', { month: 'short', year: '2-digit' })
 
 /**
- * Cumulative PO commitments (by PO target date) against cumulative payments (by paid date).
+ * Cumulative PO commitments (by PO date, else target date) against cumulative payments (by each paid date).
  * Built only from recorded POs; nothing is estimated.
  */
 export const ProjectProgressChart: React.FC = () => {
@@ -21,14 +22,16 @@ export const ProjectProgressChart: React.FC = () => {
     const committedByMonth = new Map<string, number>()
     const paidByMonth = new Map<string, number>()
     live.forEach(po => {
-      if (po.targetDate) {
-        const key = monthKey(po.targetDate)
+      const placed = po.poDate || po.targetDate
+      if (placed) {
+        const key = monthKey(placed)
         committedByMonth.set(key, (committedByMonth.get(key) ?? 0) + po.poValueGst)
       }
-      if (po.status === 'Paid' && po.paidDate) {
-        const key = monthKey(po.paidDate)
-        paidByMonth.set(key, (paidByMonth.get(key) ?? 0) + po.poValueGst)
-      }
+      ;(po.payments ?? []).forEach(payment => {
+        if (payment.reversed || !payment.paidDate) return
+        const key = monthKey(payment.paidDate)
+        paidByMonth.set(key, (paidByMonth.get(key) ?? 0) + paymentTotal(payment))
+      })
     })
     const months = [...new Set([...committedByMonth.keys(), ...paidByMonth.keys()])].sort()
     let committed = 0
@@ -55,7 +58,7 @@ export const ProjectProgressChart: React.FC = () => {
               <TrendingUp className="h-4 w-4 text-blue-600" />
               <CardTitle>Commitments and payments over time</CardTitle>
             </div>
-            <CardDescription>Cumulative PO value by target date, and cumulative payments by paid date.</CardDescription>
+            <CardDescription>Cumulative PO value by PO date, and cumulative payments by paid date.</CardDescription>
           </div>
           <div className="flex items-center gap-4 text-xs text-slate-500">
             <span className="inline-flex items-center gap-1.5">

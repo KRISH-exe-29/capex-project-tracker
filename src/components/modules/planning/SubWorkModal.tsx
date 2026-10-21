@@ -9,6 +9,7 @@ import type { SubWork, SubWorkStatus } from '../../../types/capex'
 import { useCapex } from '../../../context/CapexContext'
 import { committed, isSettled, openPr } from '../../../utils/capexRules'
 import { formatINR } from '../../../utils/formatters'
+import { PO_SUB_CATEGORIES } from '../../../data/capexLists'
 import { BudgetGauge } from '../procurement/BudgetGauge'
 
 interface SubWorkModalProps {
@@ -24,6 +25,8 @@ interface SubWorkModalProps {
 interface PoFormData {
   prId: string
   poNumber: string
+  poDate: string
+  subCategory: string
   workDescription: string
   supplierName: string
   bpCode: string
@@ -34,11 +37,6 @@ interface PoFormData {
   quotesCompared: number
   lowestQuoteSelected: 'yes' | 'no'
   selectionJustification: string
-  grnNumber: string
-  grnDate: string
-  invoiceNumber: string
-  invoiceDate: string
-  paidDate: string
 }
 
 const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
@@ -46,6 +44,8 @@ const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOS
 const EMPTY: PoFormData = {
   prId: '',
   poNumber: '',
+  poDate: new Date().toISOString().slice(0, 10),
+  subCategory: '',
   workDescription: '',
   supplierName: '',
   bpCode: '',
@@ -55,19 +55,13 @@ const EMPTY: PoFormData = {
   status: 'PO Issued',
   quotesCompared: 3,
   lowestQuoteSelected: 'yes',
-  selectionJustification: '',
-  grnNumber: '',
-  grnDate: '',
-  invoiceNumber: '',
-  invoiceDate: '',
-  paidDate: ''
+  selectionJustification: ''
 }
 
 const STATUS_OPTIONS: { value: SubWorkStatus; label: string }[] = [
   { value: 'PO Issued', label: 'PO issued' },
   { value: 'In Execution', label: 'In execution' },
-  { value: 'Billed', label: 'Billed' },
-  { value: 'Paid', label: 'Paid' }
+  { value: 'Billed', label: 'Billed (invoice received)' }
 ]
 
 const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -83,6 +77,15 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
 }) => {
   const { tasks, subWorks, purchaseRequisitions, addSubWork, updateSubWork, selectedProjectId } = useCapex()
   const editing = Boolean(subWorkToEdit)
+  // Part paid and Paid follow the recorded payments, so the status cannot be picked by hand.
+  const statusFromPayments = subWorkToEdit?.status === 'Part Paid' || subWorkToEdit?.status === 'Paid'
+  const subCategories = useMemo(
+    () =>
+      [...new Set([...PO_SUB_CATEGORIES, ...subWorks.map(po => po.subCategory?.trim() ?? '')])]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [subWorks]
+  )
   const valueLocked = Boolean(subWorkToEdit && isSettled(subWorkToEdit))
 
   const {
@@ -130,6 +133,8 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
         ...EMPTY,
         prId: subWorkToEdit.prId ?? '',
         poNumber: subWorkToEdit.poNumber,
+        poDate: subWorkToEdit.poDate ?? '',
+        subCategory: subWorkToEdit.subCategory ?? '',
         workDescription: subWorkToEdit.workDescription,
         supplierName: subWorkToEdit.supplierName,
         bpCode: subWorkToEdit.bpCode,
@@ -139,12 +144,7 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
         status: subWorkToEdit.status,
         quotesCompared: subWorkToEdit.quotesCompared ?? 0,
         lowestQuoteSelected: subWorkToEdit.lowestQuoteSelected === false ? 'no' : 'yes',
-        selectionJustification: subWorkToEdit.selectionJustification ?? '',
-        grnNumber: subWorkToEdit.grnNumber ?? '',
-        grnDate: subWorkToEdit.grnDate ?? '',
-        invoiceNumber: subWorkToEdit.invoiceNumber ?? '',
-        invoiceDate: subWorkToEdit.invoiceDate ?? '',
-        paidDate: subWorkToEdit.paidDate ?? ''
+        selectionJustification: subWorkToEdit.selectionJustification ?? ''
       })
     } else {
       const first = approvedPrs.find(item => item.id === defaultPrId) ?? approvedPrs[0]
@@ -170,6 +170,8 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
   const onSubmit = (data: PoFormData) => {
     const common = {
       poNumber: data.poNumber.trim(),
+      poDate: data.poDate,
+      subCategory: data.subCategory.trim() || undefined,
       workDescription: data.workDescription.trim(),
       supplierName: data.supplierName.trim(),
       bpCode: data.bpCode.trim(),
@@ -184,12 +186,7 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
     if (subWorkToEdit) {
       const saved = updateSubWork(subWorkToEdit.id, {
         ...common,
-        status: data.status,
-        grnNumber: data.grnNumber.trim(),
-        grnDate: data.grnDate,
-        invoiceNumber: data.invoiceNumber.trim(),
-        invoiceDate: data.invoiceDate,
-        paidDate: data.paidDate
+        status: statusFromPayments ? undefined : data.status
       })
       if (saved) onClose()
       return
@@ -206,8 +203,7 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
       milestoneId: task.milestoneId,
       taskId: task.id,
       wbsNumber: `${task.wbsNumber}.${subWorks.filter(po => po.taskId === task.id).length + 1}`,
-      status: 'PO Issued',
-      paidDate: ''
+      status: 'PO Issued'
     })
     if (created) onClose()
   }
@@ -293,6 +289,13 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
                 required
               />
               <Input
+                label="PO date"
+                type="date"
+                {...register('poDate', { required: 'Choose the PO date' })}
+                error={errors.poDate?.message}
+                required
+              />
+              <Input
                 label="PO value incl. GST (₹)"
                 type="number"
                 inputMode="numeric"
@@ -305,6 +308,18 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
                 disabled={valueLocked}
                 required
               />
+              <Input
+                label="Sub category"
+                list="po-sub-categories"
+                {...register('subCategory')}
+                placeholder="e.g. 3.5T Forklift, CTE"
+                helperText="Pick from the list or type a new one"
+              />
+              <datalist id="po-sub-categories">
+                {subCategories.map(item => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
               <div className="sm:col-span-2">
                 <Input
                   label="What is being bought"
@@ -320,9 +335,18 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
                 error={errors.targetDate?.message}
                 required
               />
-              {editing && (
-                <Select label="Status" {...register('status')} options={STATUS_OPTIONS} />
-              )}
+              {editing &&
+                (statusFromPayments ? (
+                  <Input
+                    label="Status"
+                    value={subWorkToEdit?.status}
+                    readOnly
+                    disabled
+                    helperText="Follows the payments recorded in Billing"
+                  />
+                ) : (
+                  <Select label="Status" {...register('status')} options={STATUS_OPTIONS} />
+                ))}
             </div>
           </section>
 
@@ -394,16 +418,9 @@ export const SubWorkModal: React.FC<SubWorkModalProps> = ({
           </section>
 
           {editing && (
-            <section className="space-y-3">
-              <SectionTitle>Receipt, invoice and payment</SectionTitle>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input label="GRN number" {...register('grnNumber')} className="font-mono" />
-                <Input label="GRN date" type="date" {...register('grnDate')} />
-                <Input label="Invoice number" {...register('invoiceNumber')} className="font-mono" />
-                <Input label="Invoice date" type="date" {...register('invoiceDate')} />
-                <Input label="Paid date" type="date" {...register('paidDate')} helperText="Leave blank until paid" />
-              </div>
-            </section>
+            <p className="rounded-lg border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-600">
+              GRN, invoice and payments are recorded per instalment under Finance → Billing.
+            </p>
           )}
 
           <div className="flex flex-col-reverse gap-2 border-t border-slate-200/70 pt-4 sm:flex-row sm:justify-end">

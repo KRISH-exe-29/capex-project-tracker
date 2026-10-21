@@ -2,13 +2,64 @@ export type RuleResult = { ok: boolean; reason?: string }
 
 type BudgetTask = { id: string; projectId: string; budgetAmount: number }
 type RulePr = { id: string; projectId: string; taskId: string; amount: number; status: string }
-type RulePo = { taskId: string; poValueGst: number; status: string; invoiceNumber?: string; paidDate?: string }
+type RulePayment = { taxableAmount: number; gstAmount: number; reversed?: unknown }
+type RulePo = {
+  taskId: string
+  poValueGst: number
+  status: string
+  invoiceNumber?: string
+  paidDate?: string
+  payments?: RulePayment[]
+}
 
 const money = (value: number) => Math.round(Number(value) || 0)
 
 /** Once a PO is billed, paid or invoiced its value is real spend: it can no longer shrink, grow or be cancelled. */
 export function isSettled(po: RulePo): boolean {
-  return po.status === 'Billed' || po.status === 'Paid' || Boolean(po.invoiceNumber?.trim()) || Boolean(po.paidDate)
+  return (
+    po.status === 'Billed' ||
+    po.status === 'Part Paid' ||
+    po.status === 'Paid' ||
+    Boolean(po.invoiceNumber?.trim()) ||
+    Boolean(po.paidDate) ||
+    // A reversed payment still counts: the value was settled once, so it stays locked.
+    Boolean(po.payments?.length)
+  )
+}
+
+export const paymentTotal = (payment: RulePayment) => money(payment.taxableAmount) + money(payment.gstAmount)
+
+/** Sum of live (not reversed) payments, taxable + GST. */
+export function paidTotal(po: RulePo): number {
+  return (po.payments ?? []).filter(item => !item.reversed).reduce((sum, item) => sum + paymentTotal(item), 0)
+}
+
+/** Status after payments: fully paid → Paid, some paid → Part Paid, none → the status before any payment. */
+export function statusAfterPayments<S extends string>(po: RulePo, unpaidStatus: S): S | 'Part Paid' | 'Paid' {
+  const paid = paidTotal(po)
+  if (paid <= 0) return unpaidStatus
+  return paid >= money(po.poValueGst) ? 'Paid' : 'Part Paid'
+}
+
+export function canAddPayment(po: RulePo, taxableAmount: number, gstAmount: number): RuleResult {
+  if (po.status === 'Cancelled') return { ok: false, reason: 'A cancelled PO cannot be paid.' }
+  if (money(taxableAmount) <= 0) return { ok: false, reason: 'Taxable amount must be greater than zero.' }
+  if (money(gstAmount) < 0) return { ok: false, reason: 'GST amount cannot be negative.' }
+  const balance = money(po.poValueGst) - paidTotal(po)
+  if (money(taxableAmount) + money(gstAmount) > balance)
+    return { ok: false, reason: `Payment exceeds the PO balance to be paid (₹${balance.toLocaleString('en-IN')}).` }
+  return { ok: true }
+}
+
+/** Master sheet "Project Status" for a work package. */
+export function deliveryStatus(
+  task: { id: string; stage?: string },
+  subWorks: RulePo[]
+): 'PO to be placed' | 'PO placed work in progress' | 'Work completed' {
+  if (task.stage === 'Project Handed Over') return 'Work completed'
+  return subWorks.some(po => po.taskId === task.id && po.status !== 'Cancelled')
+    ? 'PO placed work in progress'
+    : 'PO to be placed'
 }
 
 export function canCancelPo(po: RulePo): RuleResult {

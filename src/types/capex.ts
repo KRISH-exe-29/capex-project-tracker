@@ -4,7 +4,42 @@ export type MilestoneStatus = 'Not Started' | 'In Progress' | 'Completed' | 'Del
 
 export type TaskStatus = 'Pending' | 'In Progress' | 'Completed' | 'Blocked'
 
-export type SubWorkStatus = 'PO Issued' | 'In Execution' | 'Billed' | 'Paid' | 'Cancelled'
+export type SubWorkStatus = 'PO Issued' | 'In Execution' | 'Billed' | 'Part Paid' | 'Paid' | 'Cancelled'
+
+/** One instalment against a PO. Never edited or deleted; a mistake is reversed with a reason. */
+export interface Payment {
+  id: string
+  paidDate: string // YYYY-MM-DD
+  taxableAmount: number // ₹, before GST (the "Taxable Amount" column)
+  gstAmount: number // ₹, 0 for GST-exempt
+  grnNumber: string
+  invoiceNumber: string
+  invoiceDate?: string
+  note?: string
+  recordedBy: string
+  recordedAt: string
+  reversed?: { by: string; at: string; reason: string }
+}
+
+/** Project Stage, in order (master sheet score card). */
+export type ProjectStage =
+  | 'Enquiry'
+  | 'Technical Discussion'
+  | 'Technical Finalization'
+  | 'Commercial Negotiation'
+  | 'Purchase Order Issued'
+  | 'GA Finalized'
+  | 'Inspection Completed'
+  | 'Dispatched'
+  | 'Material Received'
+  | 'Installation Completed'
+  | 'Commissioning Completed'
+  | 'Project Handed Over'
+
+export type Quarter = 'Q1' | 'Q2' | 'Q3' | 'Q4'
+
+/** Master sheet "Project Status"; derived, never typed in. */
+export type DeliveryStatus = 'PO to be placed' | 'PO placed work in progress' | 'Work completed'
 
 export type DprStatus = 'Submitted' | 'Verified' | 'Approved'
 
@@ -99,6 +134,10 @@ export interface Task {
   status: TaskStatus
   progress: number // 0 to 100
   budgetAmount: number
+  quarter?: Quarter
+  cashflowMonth?: string // YYYY-MM
+  handoverDate?: string // YYYY-MM-DD
+  stage?: ProjectStage
 }
 
 export interface SubWork {
@@ -115,11 +154,16 @@ export interface SubWork {
   bpCode: string // Business Partner Code
   targetDate: string
   poNumber: string
+  poDate?: string // YYYY-MM-DD
+  subCategory?: string
   poValueGst: number // PO Value + GST (₹)
-  paidDate: string // YYYY-MM-DD or empty
+  /** Legacy single-payment date; read only to migrate older saved data into `payments`. */
+  paidDate?: string
   status: SubWorkStatus
   prId?: string
   payeeBpCode?: string
+  payments?: Payment[]
+  // Legacy PO-level receipt fields; new receipts are recorded on each payment.
   grnNumber?: string
   grnDate?: string
   invoiceNumber?: string

@@ -12,7 +12,8 @@ import { TaskModal } from './TaskModal'
 import { RaisePrModal } from '../procurement/RaisePrModal'
 import { useCapex } from '../../../context/CapexContext'
 import type { Task } from '../../../types/capex'
-import { committed, openPr } from '../../../utils/capexRules'
+import { committed, deliveryStatus, openPr } from '../../../utils/capexRules'
+import { PROJECT_STAGES, QUARTERS } from '../../../data/capexLists'
 import { formatDate, formatINR } from '../../../utils/formatters'
 import { cn } from '../../../utils/cn'
 
@@ -33,6 +34,8 @@ export const TaskListView: React.FC = () => {
 
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('ALL')
+  const [stage, setStage] = useState('ALL')
+  const [quarter, setQuarter] = useState('ALL')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Task | null>(null)
   const [deleting, setDeleting] = useState<Task | null>(null)
@@ -47,13 +50,15 @@ export const TaskListView: React.FC = () => {
       filteredTasks.map(task => {
         const po = committed(task.id, subWorks)
         const pr = openPr(task.id, purchaseRequisitions)
-        return { task, po, pr, left: task.budgetAmount - po - pr }
+        return { task, po, pr, left: task.budgetAmount - po - pr, delivery: deliveryStatus(task, subWorks) }
       }),
     [filteredTasks, subWorks, purchaseRequisitions]
   )
 
   const rows = ledger.filter(({ task }) => {
     if (status !== 'ALL' && task.status !== status) return false
+    if (stage !== 'ALL' && (task.stage ?? '') !== stage) return false
+    if (quarter !== 'ALL' && (task.quarter ?? '') !== quarter) return false
     const needle = search.trim().toLowerCase()
     if (!needle) return true
     const section = sections.find(item => item.id === task.sectionId)
@@ -110,6 +115,18 @@ export const TaskListView: React.FC = () => {
             onChange={setStatus}
             options={STATUSES.map(item => ({ value: item, label: item === 'ALL' ? 'All' : item }))}
           />
+          <FilterSelect
+            label="Stage"
+            value={stage}
+            onChange={setStage}
+            options={[{ value: 'ALL', label: 'All' }, ...PROJECT_STAGES.map(item => ({ value: item, label: item }))]}
+          />
+          <FilterSelect
+            label="Quarter"
+            value={quarter}
+            onChange={setQuarter}
+            options={[{ value: 'ALL', label: 'All' }, ...QUARTERS.map(item => ({ value: item, label: item }))]}
+          />
         </Toolbar>
 
         {rows.length === 0 ? (
@@ -134,17 +151,15 @@ export const TaskListView: React.FC = () => {
               <thead>
                 <tr>
                   <th>Work package</th>
-                  <th>Section</th>
                   <th className="num">Budget</th>
                   <th className="num">PO committed</th>
-                  <th className="num">Open PRs</th>
                   <th className="num">Available</th>
                   <th>Status</th>
                   <th className="actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ task, po, pr, left }) => {
+                {rows.map(({ task, po, pr, left, delivery }) => {
                   const project = projects.find(item => item.id === task.projectId)
                   const section = sections.find(item => item.id === task.sectionId)
                   const used = task.budgetAmount > 0 ? Math.min(100, ((po + pr) / task.budgetAmount) * 100) : 0
@@ -157,14 +172,17 @@ export const TaskListView: React.FC = () => {
                           </span>
                           <div className="min-w-0">
                             <p className="truncate font-semibold text-slate-900">{task.name}</p>
-                            <p className="truncate text-xs text-slate-500">{project?.code}</p>
+                            <p className="truncate text-xs text-slate-500">
+                              {project?.code} · {section?.name ?? '—'}
+                            </p>
                           </div>
                         </div>
                       </td>
-                      <td className="max-w-[160px] truncate">{section?.name ?? '—'}</td>
                       <td className="num font-semibold text-slate-900">{formatINR(task.budgetAmount)}</td>
-                      <td className="num">{formatINR(po)}</td>
-                      <td className="num">{formatINR(pr)}</td>
+                      <td className="num">
+                        {formatINR(po)}
+                        <div className="text-[11px] text-slate-500">{pr ? `+ ${formatINR(pr)} open PR` : 'No open PR'}</div>
+                      </td>
                       <td className="num">
                         <span className={cn('font-semibold', left < 0 ? 'text-rose-600' : 'text-emerald-700')}>
                           {formatINR(left)}
@@ -176,10 +194,13 @@ export const TaskListView: React.FC = () => {
                           />
                         </div>
                       </td>
-                      <td>
-                        <StatusBadge status={task.status} />
-                        <div className="mono-num mt-1 text-[11px] text-slate-500">
-                          {task.progress ?? 0}% · due {formatDate(task.targetDate)}
+                      <td className="max-w-[220px]">
+                        <StatusBadge status={delivery} />
+                        <div className="mt-1 truncate text-[11px] text-slate-500" title={task.stage}>
+                          {[task.stage ?? 'Stage not set', task.quarter].filter(Boolean).join(' · ')}
+                        </div>
+                        <div className="mono-num text-[11px] text-slate-500">
+                          {task.status} · {task.progress ?? 0}% · due {formatDate(task.targetDate)}
                         </div>
                       </td>
                       <td className="actions">
